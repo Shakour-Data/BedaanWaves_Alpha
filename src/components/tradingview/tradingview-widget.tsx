@@ -56,11 +56,23 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
   const tvSymbols = props.symbols
     ? props.symbols.map((s) => `NASDAQ:${s.toUpperCase()}`)
     : undefined;
+  // Note: `autosize: true` is only supported by certain widgets (advanced-chart,
+  // mini-symbol-overview, symbol-info). For market-overview, events, screener,
+  // stock-heatmap etc. we must use explicit width/height instead.
+  const widgetsNeedingAutosize = new Set([
+    "advanced-chart", "mini-symbol-overview", "symbol-info", "financials", "timeline",
+  ]);
+  const useAutosize = widgetsNeedingAutosize.has(props.type);
   const base: Record<string, unknown> = {
-    autosize: props.autosize ?? true,
     theme: props.theme ?? "dark",
     locale: props.locale ?? "en",
   };
+  if (useAutosize) {
+    base.autosize = props.autosize ?? true;
+  } else {
+    base.width = "100%";
+    base.height = "100%";
+  }
   switch (props.type) {
     case "advanced-chart":
       return {
@@ -132,16 +144,49 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
     case "market-overview":
       return {
         ...base,
-        colorTheme: props.theme ?? "dark",
+        colorTheme: props.theme ?? "light",
         dateRange: "3M",
         showChart: true,
+        showSymbolLogo: true,
+        showFloatingTooltip: false,
         locale: props.locale ?? "en",
         isTransparent: false,
-        width: "100%",
-        height: "100%",
         largeChartUrl: "",
         plotLineColorGrowing: "rgba(16,185,129,1)",
         plotLineColorFalling: "rgba(239,68,68,1)",
+        gridLineColor: "rgba(240, 243, 250, 0)",
+        belowLineFillColorGrowing: "rgba(16, 185, 129, 0.12)",
+        belowLineFillColorFalling: "rgba(239, 68, 68, 0.12)",
+        symbolActiveColor: "rgba(16, 185, 129, 0.15)",
+        tabs: props.extraConfig?.tabs ?? [
+          {
+            title: "Indices",
+            symbols: [
+              { s: "NASDAQ:NDX", d: "NASDAQ-100" },
+              { s: "NASDAQ:ONEQ", d: "NASDAQ Composite" },
+              { s: "SP:SPX", d: "S&P 500" },
+              { s: "TVC:DJI", d: "Dow Jones" },
+            ],
+          },
+          {
+            title: "Funds",
+            symbols: [
+              { s: "NASDAQ:QQQ", d: "Invesco QQQ" },
+              { s: "AMEX:SPY", d: "SPDR S&P 500" },
+              { s: "NASDAQ:SMH", d: "Semis ETF" },
+              { s: "NASDAQ:XLK", d: "Tech Sector" },
+            ],
+          },
+          {
+            title: "Futures",
+            symbols: [
+              { s: "CME_MINI:ES1!", d: "S&P 500 Fut" },
+              { s: "CME_MINI:NQ1!", d: "NASDAQ Fut" },
+              { s: "CBOT_MINI:YM1!", d: "Dow Fut" },
+              { s: "COMEX:GC1!", d: "Gold" },
+            ],
+          },
+        ],
         ...props.extraConfig,
       };
     case "screener":
@@ -169,18 +214,16 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
         hasTopBar: true,
         hasFundamentals: true,
         isTransparent: false,
-        width: "100%",
-        height: "100%",
         ...props.extraConfig,
       };
     case "events":
       return {
         ...base,
-        colorTheme: props.theme ?? "dark",
+        colorTheme: props.theme ?? "light",
         isTransparent: false,
-        width: "100%",
-        height: "100%",
         locale: props.locale ?? "en",
+        importanceFilter: "-1,0,1",
+        country: "us",
         ...props.extraConfig,
       };
     case "symbol-info":
@@ -254,17 +297,15 @@ export function TradingViewWidget(props: TVWidgetProps) {
     return () => obs.disconnect();
   }, [inView]);
 
-  // Inject the TradingView script
-  const initRef = useRef(false);
+  // Inject the TradingView script — re-initializes when configKey changes
+  // (e.g. when switching from advanced-chart to stock-heatmap)
   useEffect(() => {
     if (!inView) return;
-    if (initRef.current) return;
-    initRef.current = true;
     // Defer status update to avoid synchronous setState-in-effect
     Promise.resolve().then(() => setStatus("loading"));
     const el = containerRef.current;
     if (!el) return;
-    // clear children
+    // clear children (remove old iframe + script)
     el.innerHTML = "";
     const script = document.createElement("script");
     script.src = SCRIPT_URLS[props.type];
@@ -276,7 +317,7 @@ export function TradingViewWidget(props: TVWidgetProps) {
     // Fallback timeout
     const timer = setTimeout(() => {
       setStatus((cur) => (cur === "loading" ? "error" : cur));
-    }, 6000);
+    }, 8000);
     return () => {
       clearTimeout(timer);
     };
@@ -305,7 +346,7 @@ export function TradingViewWidget(props: TVWidgetProps) {
       <div
         ref={containerRef}
         className="tradingview-widget-container__widget w-full h-full"
-        style={{ minHeight: inView ? heightStyle : 0 }}
+        style={{ minHeight: heightStyle }}
       />
       {status === "error" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted/30 text-center text-xs text-muted-foreground">

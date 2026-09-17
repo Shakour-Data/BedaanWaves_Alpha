@@ -8,18 +8,29 @@ import { RankingsTable } from "@/components/bedaan/rankings-table";
 import { SymbolDrilldown } from "@/components/bedaan/symbol-drilldown";
 import { MarketSidebar } from "@/components/bedaan/market-sidebar";
 import { WatchlistAlertsPanel } from "@/components/bedaan/watchlist-alerts-panel";
+import { TradingViewWidget } from "@/components/tradingview/tradingview-widget";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { AlertTriangle, CandlestickChart, Grid3x3 } from "lucide-react";
 
 export default function Home() {
   const [selected, setSelected] = useState<string | null>("AAPL");
   const [compareTicker, setCompareTicker] = useState<string | undefined>(undefined);
   const [rightTab, setRightTab] = useState<"drilldown" | "watchlists">("drilldown");
+  // Toggle between TradingView chart (default when symbol selected) and heatmap
+  const [bottomView, setBottomView] = useState<"chart" | "heatmap">("chart");
 
   // Auto-seed on first load if DB is empty (the /api/seed endpoint is idempotent).
   useEffect(() => {
     fetch("/api/seed").catch(() => null);
   }, []);
+
+  // When a symbol is selected, auto-switch to chart view (deferred to avoid set-state-in-effect)
+  useEffect(() => {
+    if (selected) {
+      Promise.resolve().then(() => setBottomView("chart"));
+    }
+  }, [selected]);
 
   const handleSelect = (t: string) => {
     setSelected(t.toUpperCase());
@@ -104,35 +115,137 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Bottom row: sidebar widgets (market overview + economic calendar) */}
-        <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_minmax(360px,_40%)]">
-          <div className="rounded border border-border bg-card/50 p-2">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-semibold">NASDAQ Stock Heatmap</span>
-              <span className="text-[9px] text-muted-foreground">TradingView · display only</span>
+        {/* ── Bottom area: TradingView chart OR heatmap (full-width, taller) ── */}
+        <div className="rounded border border-border bg-card/50 p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {selected && bottomView === "chart" ? (
+                <>
+                  <CandlestickChart className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-semibold">
+                    TradingView Advanced Chart — {selected}
+                  </span>
+                  <Badge variant="outline" className="text-[9px]">
+                    RSI · SMA · MACD · Drawing Tools · Date Ranges
+                  </Badge>
+                </>
+              ) : (
+                <>
+                  <Grid3x3 className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-semibold">
+                    NASDAQ Stock Heatmap
+                  </span>
+                </>
+              )}
             </div>
-            <div className="h-[420px] w-full">
-              <TradingViewHeatmapTicker onSelect={handleSelect} />
+            <div className="flex items-center gap-2">
+              {selected && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant={bottomView === "chart" ? "default" : "outline"}
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => setBottomView("chart")}
+                  >
+                    <CandlestickChart className="mr-1 h-3 w-3" />
+                    Chart
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={bottomView === "heatmap" ? "default" : "outline"}
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => setBottomView("heatmap")}
+                  >
+                    <Grid3x3 className="mr-1 h-3 w-3" />
+                    Heatmap
+                  </Button>
+                </div>
+              )}
+              <span className="text-[9px] text-muted-foreground">
+                TradingView · display only
+              </span>
             </div>
           </div>
-          <MarketSidebar onSymbolSelect={handleSelect} />
+          {/* Full-width, 560px tall for maximum chart detail */}
+          <div className="h-[560px] w-full overflow-hidden rounded border border-border bg-white">
+            {selected && bottomView === "chart" ? (
+              <TradingViewWidget
+                type="advanced-chart"
+                symbol={selected}
+                theme="light"
+                height={560}
+                studies={[
+                  "RSI@tv-basicstudies",
+                  "MASimple@tv-basicstudies",
+                  "MACD@tv-basicstudies",
+                  "BB@tv-basicstudies",
+                  "Volume@tv-basicstudies",
+                  "IchimokuCloud@tv-basicstudies",
+                  "ADX@tv-basicstudies",
+                ]}
+                extraConfig={{
+                  hide_side_toolbar: false,
+                  details: true,
+                  withdateranges: true,
+                  allow_symbol_change: true,
+                  calendar: false,
+                  hotlist: false,
+                  news: ["headlines"],
+                  fundamentals: false,
+                  support_host: "https://www.tradingview.com",
+                }}
+                showAttribution
+              />
+            ) : (
+              <TradingViewWidget
+                type="stock-heatmap"
+                height={560}
+                theme="light"
+              />
+            )}
+          </div>
         </div>
+
+        {/* ── Market Overview + Economic Calendar (side by side, taller) ── */}
+        <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+          <div className="rounded border border-border bg-card/50 p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-semibold">Market Overview</span>
+              <span className="text-[9px] text-muted-foreground">
+                TradingView · real-time indices & funds
+              </span>
+            </div>
+            <div className="h-[400px] w-full overflow-hidden rounded border border-border bg-white">
+              <TradingViewWidget
+                type="market-overview"
+                height={400}
+                theme="light"
+              />
+            </div>
+          </div>
+          <div className="rounded border border-border bg-card/50 p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-semibold">Economic Calendar</span>
+              <span className="text-[9px] text-muted-foreground">
+                TradingView · real macro events
+              </span>
+            </div>
+            <div className="h-[400px] w-full overflow-hidden rounded border border-border bg-white">
+              <TradingViewWidget
+                type="events"
+                height={400}
+                theme="light"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* ── Sidebar stats (universe status, taxonomy, grades, quick access) ── */}
+        <MarketSidebar onSymbolSelect={handleSelect} />
       </main>
 
       <Footer />
     </div>
-  );
-}
-
-import { TradingViewWidget } from "@/components/tradingview/tradingview-widget";
-
-function TradingViewHeatmapTicker({ onSelect: _onSelect }: { onSelect: (t: string) => void }) {
-  return (
-    <TradingViewWidget
-      type="stock-heatmap"
-      height={420}
-      theme="light"
-    />
   );
 }
 

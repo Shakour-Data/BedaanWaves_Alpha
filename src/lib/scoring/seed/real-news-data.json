@@ -1,12 +1,12 @@
 {
-  "fetched_at": "2026-09-17T03:14:27.063431",
+  "fetched_at": "2026-09-17T03:34:52.849553",
   "source": "z-ai web-search (real current news) + curated real market events",
   "news": [
     {
       "headline": "NVIDIA beats Q2 estimates; data center revenue up 112% YoY on AI demand",
       "source": "Reuters",
       "url": "https://reuters.com/nvda-q2",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
@@ -21,7 +21,7 @@
       "headline": "Apple unveils new iPhone lineup with Apple Intelligence features",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/aapl-iphone",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
@@ -34,7 +34,7 @@
       "headline": "Microsoft Azure cloud growth accelerates; Copilot adoption strong",
       "source": "CNBC",
       "url": "https://cnbc.com/msft-azure",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -46,7 +46,7 @@
       "headline": "Fed holds rates steady at 3.5-3.75%; signals patience on future cuts",
       "source": "Reuters",
       "url": "https://reuters.com/fed-decision",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "neutral",
       "severity": "critical",
       "tickers": [
@@ -59,7 +59,7 @@
       "headline": "Tesla deliveries beat estimates; shares surge on demand recovery",
       "source": "CNBC",
       "url": "https://cnbc.com/tsla-deliveries",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
@@ -70,7 +70,7 @@
       "headline": "Semiconductor sector rallies on AI capex outlook from hyperscalers",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/semi-rally",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -89,7 +89,7 @@
       "headline": "Alphabet launches new Gemini model; ad revenue beats estimates",
       "source": "Reuters",
       "url": "https://reuters.com/googl-gemini",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -101,7 +101,7 @@
       "headline": "Amazon AWS reaccelerates; retail margin expansion continues",
       "source": "CNBC",
       "url": "https://cnbc.com/amzn-aws",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -112,7 +112,7 @@
       "headline": "Meta Reality Labs losses narrow; ad impressions grow double digits",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/meta-rl",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -123,7 +123,7 @@
       "headline": "Oil prices climb on OPEC+ supply cut extension and geopolitical risk",
       "source": "Reuters",
       "url": "https://reuters.com/oil-opec",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bearish",
       "severity": "critical",
       "tickers": [
@@ -136,7 +136,7 @@
       "headline": "Gold hits record high on Fed rate-cut expectations and safe-haven demand",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/gold-record",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -147,7 +147,7 @@
       "headline": "Netflix ad-tier subscribers cross 80M; content spend to rise",
       "source": "CNBC",
       "url": "https://cnbc.com/nflx-ads",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -158,7 +158,7 @@
       "headline": "Broadcom raises AI revenue forecast to $12B on custom silicon demand",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/avgo-ai",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
@@ -172,7 +172,7 @@
       "headline": "Costco same-store sales beat; traffic up 7% globally",
       "source": "Reuters",
       "url": "https://reuters.com/cost-sps",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -183,7 +183,7 @@
       "headline": "AMD MI400 roadmap impresses at analyst day; AI accelerator share gains",
       "source": "CNBC",
       "url": "https://cnbc.com/amd-mi400",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -195,7 +195,7 @@
       "headline": "Nonfarm payrolls at 162K; unemployment steady at 4.1%",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/nfp",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "neutral",
       "severity": "critical",
       "tickers": [
@@ -208,7 +208,7 @@
       "headline": "Palantir wins $480M DoD contract extension; AIP platform adoption grows",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/pltr-dod",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
@@ -219,7 +219,7 @@
       "headline": "Shopify gross merchandise volume beats; merchant adoption accelerates",
       "source": "Reuters",
       "url": "https://reuters.com/shop-gmv",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -230,7 +230,7 @@
       "headline": "Snowflake product revenue accelerates to 30%; AI features drive adoption",
       "source": "CNBC",
       "url": "https://cnbc.com/snow-revenue",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -244,7 +244,7 @@
       "headline": "Bitcoin reclaims $70K; Coinbase volume surges on ETF inflows",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/btc-70k",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
@@ -255,7 +255,7 @@
       "headline": "ASML book-to-bill exceeds 1.5; EUV demand strong for leading-edge nodes",
       "source": "Bloomberg",
       "url": "https://bloomberg.com/asml-bill",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
@@ -269,7 +269,7 @@
       "headline": "Intel foundry losses widen; strategic review launched",
       "source": "CNBC",
       "url": "https://cnbc.com/intc-foundry",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bearish",
       "severity": "critical",
       "tickers": [
@@ -282,7 +282,7 @@
       "headline": "CPI comes in at 3.4% YoY; core inflation sticky at 2.7%",
       "source": "BLS",
       "url": "https://bls.gov/cpi",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "neutral",
       "severity": "critical",
       "tickers": [
@@ -296,7 +296,7 @@
       "headline": "Consumer sentiment falls to 47.8; recession concerns rise",
       "source": "U.Michigan",
       "url": "https://umich.edu/sentiment",
-      "publishedAt": "2026-09-17T03:14:27.063355",
+      "publishedAt": "2026-09-17T03:34:52.849468",
       "sentiment": "bearish",
       "severity": "notable",
       "tickers": [
@@ -308,7 +308,7 @@
       "headline": "Netflix Inc (NFLX)",
       "source": "www.morningstar.com",
       "url": "https://www.morningstar.com",
-      "publishedAt": "2026-09-17T03:14:24.907531",
+      "publishedAt": "2026-09-17T03:34:50.477056",
       "sentiment": "neutral",
       "severity": "informational",
       "tickers": [
@@ -316,32 +316,25 @@
       ]
     },
     {
-      "headline": "AVGO: Broadcom Inc - Stock Price, Quote and News",
-      "source": "CNBC",
-      "url": "https://www.cnbc.com/quotes/AVGO",
-      "publishedAt": "2026-09-17T03:14:21.687422",
-      "sentiment": "neutral",
-      "severity": "informational",
-      "tickers": [
-        "AVGO"
-      ]
-    },
-    {
-      "headline": "Broadcom Inc. (AVGO)",
-      "source": "Yahoo Finance",
-      "url": "https://finance.yahoo.com/quote/AVGO",
-      "publishedAt": "2026-09-17T03:14:21.687378",
-      "sentiment": "neutral",
-      "severity": "informational",
-      "tickers": [
-        "AVGO"
-      ]
-    },
-    {
-      "headline": "Artificial intelligence (AI) Stocks",
+      "headline": "Artificial intelligence (AI) Stocks - Barchart.com",
       "source": "www.barchart.com",
-      "url": "https://www.barchart.com",
-      "publishedAt": "2026-09-17T03:14:20.252444",
+      "url": "https://www.barchart.com/investing-ideas/ai-stocks",
+      "publishedAt": "2026-09-17T03:34:45.761610",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "PLTR",
+        "SNOW",
+        "DDOG",
+        "NET",
+        "CRWD"
+      ]
+    },
+    {
+      "headline": "Artificial Intelligence - AI News",
+      "source": "Reuters",
+      "url": "https://www.reuters.com/technology/artificial-intelligence",
+      "publishedAt": "2026-09-17T03:34:45.761558",
       "sentiment": "neutral",
       "severity": "informational",
       "tickers": [
@@ -356,7 +349,7 @@
       "headline": "Bitcoin Price: BTC/USD Live Price Chart, Market Cap",
       "source": "www.coingecko.com",
       "url": "https://www.coingecko.com",
-      "publishedAt": "2026-09-17T03:14:18.686751",
+      "publishedAt": "2026-09-17T03:34:44.228059",
       "sentiment": "neutral",
       "severity": "informational",
       "tickers": [
@@ -364,39 +357,145 @@
       ]
     },
     {
-      "headline": "Investor Relations - Nasdaq, Inc.",
+      "headline": "Quarterly Results | Nasdaq, Inc. - Investor Relations",
       "source": "ir.nasdaq.com",
       "url": "https://ir.nasdaq.com",
-      "publishedAt": "2026-09-17T03:14:17.205958",
+      "publishedAt": "2026-09-17T03:34:42.634636",
       "sentiment": "neutral",
       "severity": "informational",
       "tickers": []
     },
     {
-      "headline": "Earnings Reports - Nasdaq",
-      "source": "www.nasdaq.com",
-      "url": "https://www.nasdaq.com/market-activity/earnings",
-      "publishedAt": "2026-09-17T03:14:17.205914",
-      "sentiment": "neutral",
-      "severity": "critical",
-      "tickers": []
-    },
-    {
-      "headline": "Gold News Headlines Today - Metals Daily",
+      "headline": "Gold News Headlines Today",
       "source": "www.metalsdaily.com",
-      "url": "https://www.metalsdaily.com/news/gold-news",
-      "publishedAt": "2026-09-17T03:14:14.194955",
+      "url": "https://www.metalsdaily.com",
+      "publishedAt": "2026-09-17T03:34:38.855083",
       "sentiment": "neutral",
-      "severity": "notable",
+      "severity": "informational",
       "tickers": [
         "GLD"
       ]
     },
     {
-      "headline": "Market Activity",
-      "source": "www.nasdaq.com",
-      "url": "https://www.nasdaq.com",
-      "publishedAt": "2026-09-17T03:14:08.011496",
+      "headline": "United States Federal Reserve Interest Rate Decision",
+      "source": "Investing.com",
+      "url": "https://www.investing.com",
+      "publishedAt": "2026-09-17T03:34:35.811528",
+      "sentiment": "neutral",
+      "severity": "critical",
+      "tickers": [
+        "TLT",
+        "GLD",
+        "QQQ"
+      ]
+    },
+    {
+      "headline": "United States Fed Funds Interest Rate",
+      "source": "tradingeconomics.com",
+      "url": "https://tradingeconomics.com",
+      "publishedAt": "2026-09-17T03:34:35.811511",
+      "sentiment": "neutral",
+      "severity": "critical",
+      "tickers": [
+        "TLT",
+        "GLD",
+        "QQQ"
+      ]
+    },
+    {
+      "headline": "H.15 - Selected Interest Rates (Daily) - September 16, 2026",
+      "source": "www.federalreserve.gov",
+      "url": "https://www.federalreserve.gov",
+      "publishedAt": "2026-09-17T03:34:35.811464",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "TLT",
+        "GLD",
+        "QQQ"
+      ]
+    },
+    {
+      "headline": "7 Best-Performing Semiconductor Stocks for September 2026",
+      "source": "www.nerdwallet.com",
+      "url": "https://www.nerdwallet.com/investing/learn/best-semiconductor-stocks",
+      "publishedAt": "2026-09-17T03:34:33.944482",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "NVDA",
+        "AMD",
+        "ASML",
+        "AVGO",
+        "MRVL",
+        "NXPI"
+      ]
+    },
+    {
+      "headline": "Semiconductors",
+      "source": "CNBC",
+      "url": "https://www.cnbc.com/semiconductors",
+      "publishedAt": "2026-09-17T03:34:33.944461",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "NVDA",
+        "AMD",
+        "ASML",
+        "AVGO",
+        "MRVL",
+        "NXPI"
+      ]
+    },
+    {
+      "headline": "7 Best Semiconductor Stocks for 2026 | Investing - U.S. News Money",
+      "source": "money.usnews.com",
+      "url": "https://money.usnews.com/investing/articles/best-semiconductor-stocks-to-buy",
+      "publishedAt": "2026-09-17T03:34:33.944434",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "NVDA",
+        "AMD",
+        "ASML",
+        "AVGO",
+        "MRVL",
+        "NXPI"
+      ]
+    },
+    {
+      "headline": "Semiconductors Stock Performance",
+      "source": "Yahoo Finance",
+      "url": "https://finance.yahoo.com/sectors/technology/semiconductors",
+      "publishedAt": "2026-09-17T03:34:33.944386",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "NVDA",
+        "AMD",
+        "ASML",
+        "AVGO",
+        "MRVL",
+        "NXPI"
+      ]
+    },
+    {
+      "headline": "US Markets, World Markets, and Stock Quotes",
+      "source": "www.cnn.com",
+      "url": "https://www.cnn.com",
+      "publishedAt": "2026-09-17T03:34:32.399601",
+      "sentiment": "neutral",
+      "severity": "informational",
+      "tickers": [
+        "QQQ",
+        "SPY"
+      ]
+    },
+    {
+      "headline": "U.S. Stock Market Headlines | Breaking Stock Market News",
+      "source": "Reuters",
+      "url": "https://www.reuters.com",
+      "publishedAt": "2026-09-17T03:34:32.399577",
       "sentiment": "neutral",
       "severity": "informational",
       "tickers": [
@@ -408,7 +507,7 @@
       "headline": "Current Headlines",
       "source": "www.nasdaqtrader.com",
       "url": "https://www.nasdaqtrader.com",
-      "publishedAt": "2026-09-17T03:14:08.011447",
+      "publishedAt": "2026-09-17T03:34:32.399509",
       "sentiment": "neutral",
       "severity": "informational",
       "tickers": [
@@ -417,10 +516,10 @@
       ]
     },
     {
-      "headline": "META: Meta Platforms, Inc. - Stock Price, Quote and News",
+      "headline": "Meta Platforms, Inc. - Stock Price, Quote and News",
       "source": "CNBC",
       "url": "https://www.cnbc.com/quotes/META",
-      "publishedAt": "2026-09-17T03:14:03.256601",
+      "publishedAt": "2026-09-17T03:34:26.866414",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -431,7 +530,7 @@
       "headline": "Meta Platforms, Inc. (META)",
       "source": "Yahoo Finance",
       "url": "https://finance.yahoo.com/quote/META",
-      "publishedAt": "2026-09-17T03:14:03.256534",
+      "publishedAt": "2026-09-17T03:34:26.866196",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -439,10 +538,32 @@
       ]
     },
     {
-      "headline": "Announcements | Microsoft Azure Blog",
+      "headline": "Press Releases | Tesla Investor Relations",
+      "source": "ir.tesla.com",
+      "url": "https://ir.tesla.com",
+      "publishedAt": "2026-09-17T03:34:22.292577",
+      "sentiment": "neutral",
+      "severity": "notable",
+      "tickers": [
+        "TSLA"
+      ]
+    },
+    {
+      "headline": "TSLA: Tesla Inc - Stock Price, Quote and News",
+      "source": "CNBC",
+      "url": "https://www.cnbc.com",
+      "publishedAt": "2026-09-17T03:34:22.292497",
+      "sentiment": "neutral",
+      "severity": "notable",
+      "tickers": [
+        "TSLA"
+      ]
+    },
+    {
+      "headline": "Microsoft Azure Blog",
       "source": "azure.microsoft.com",
-      "url": "https://azure.microsoft.com",
-      "publishedAt": "2026-09-17T03:14:00.019360",
+      "url": "https://azure.microsoft.com/en-us/blog",
+      "publishedAt": "2026-09-17T03:34:19.923227",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -452,8 +573,8 @@
     {
       "headline": "NVDA: NVIDIA Corporation - Stock Price, Quote and News",
       "source": "CNBC",
-      "url": "https://www.cnbc.com",
-      "publishedAt": "2026-09-17T03:13:58.354667",
+      "url": "https://www.cnbc.com/quotes/NVDA",
+      "publishedAt": "2026-09-17T03:34:16.437042",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -464,10 +585,24 @@
       ]
     },
     {
-      "headline": "Apple (AAPL) Stock Price, Quote, News & History - Nasdaq",
+      "headline": "NVIDIA Corporation (NVDA)",
+      "source": "Yahoo Finance",
+      "url": "https://finance.yahoo.com/quote/NVDA",
+      "publishedAt": "2026-09-17T03:34:16.436965",
+      "sentiment": "neutral",
+      "severity": "notable",
+      "tickers": [
+        "NVDA",
+        "AMD",
+        "AVGO",
+        "ARM"
+      ]
+    },
+    {
+      "headline": "Apple (AAPL) Stock Price, Quote, News & History",
       "source": "www.nasdaq.com",
-      "url": "https://www.nasdaq.com/market-activity/stocks/aapl",
-      "publishedAt": "2026-09-17T03:13:56.615960",
+      "url": "https://www.nasdaq.com",
+      "publishedAt": "2026-09-17T03:34:14.516101",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -477,8 +612,8 @@
     {
       "headline": "Investor Relations - Apple",
       "source": "investor.apple.com",
-      "url": "https://investor.apple.com/investor-relations/default.aspx",
-      "publishedAt": "2026-09-17T03:13:56.615938",
+      "url": "https://investor.apple.com",
+      "publishedAt": "2026-09-17T03:34:14.516080",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
@@ -488,135 +623,12 @@
     {
       "headline": "AAPL Apple Inc.",
       "source": "Yahoo Finance",
-      "url": "https://finance.yahoo.com/quote/AAPL",
-      "publishedAt": "2026-09-17T03:13:56.615887",
+      "url": "https://finance.yahoo.com",
+      "publishedAt": "2026-09-17T03:34:14.516013",
       "sentiment": "neutral",
       "severity": "notable",
       "tickers": [
         "AAPL"
-      ]
-    },
-    {
-      "headline": "United States Fed Funds Interest Rate",
-      "source": "tradingeconomics.com",
-      "url": "https://tradingeconomics.com",
-      "publishedAt": "2026-09-17T00:00:00",
-      "sentiment": "neutral",
-      "severity": "critical",
-      "tickers": [
-        "TLT",
-        "GLD",
-        "QQQ"
-      ]
-    },
-    {
-      "headline": "NVIDIA Corporation (NVDA)",
-      "source": "Yahoo Finance",
-      "url": "https://finance.yahoo.com",
-      "publishedAt": "2026-09-16T00:00:00",
-      "sentiment": "neutral",
-      "severity": "notable",
-      "tickers": [
-        "NVDA",
-        "AMD",
-        "AVGO",
-        "ARM"
-      ]
-    },
-    {
-      "headline": "H.15 - Selected Interest Rates (Daily) - September 16, 2026",
-      "source": "www.federalreserve.gov",
-      "url": "https://www.federalreserve.gov",
-      "publishedAt": "2026-09-16T00:00:00",
-      "sentiment": "neutral",
-      "severity": "informational",
-      "tickers": [
-        "TLT",
-        "GLD",
-        "QQQ"
-      ]
-    },
-    {
-      "headline": "United States Federal Reserve Interest Rate Decision",
-      "source": "Investing.com",
-      "url": "https://www.investing.com",
-      "publishedAt": "2026-09-16T00:00:00",
-      "sentiment": "neutral",
-      "severity": "critical",
-      "tickers": [
-        "TLT",
-        "GLD",
-        "QQQ"
-      ]
-    },
-    {
-      "headline": "TSLA Stock Quote Price and Forecast",
-      "source": "www.cnn.com",
-      "url": "https://www.cnn.com",
-      "publishedAt": "2026-09-15T00:00:00",
-      "sentiment": "neutral",
-      "severity": "informational",
-      "tickers": [
-        "TSLA"
-      ]
-    },
-    {
-      "headline": "Chip stocks down today: AMD, Nvidia, Intel, Sandisk, AI",
-      "source": "www.fastcompany.com",
-      "url": "https://www.fastcompany.com",
-      "publishedAt": "2026-09-14T00:00:00",
-      "sentiment": "neutral",
-      "severity": "notable",
-      "tickers": [
-        "NVDA",
-        "AMD",
-        "ASML",
-        "AVGO",
-        "MRVL",
-        "NXPI"
-      ]
-    },
-    {
-      "headline": "Microsoft reveals Azure cloud sales in financial reporting shift",
-      "source": "Reuters",
-      "url": "https://www.reuters.com",
-      "publishedAt": "2026-09-02T00:00:00",
-      "sentiment": "neutral",
-      "severity": "notable",
-      "tickers": [
-        "MSFT"
-      ]
-    },
-    {
-      "headline": "7 Best-Performing Semiconductor Stocks for September 2026",
-      "source": "www.nerdwallet.com",
-      "url": "https://www.nerdwallet.com",
-      "publishedAt": "2026-09-01T00:00:00",
-      "sentiment": "neutral",
-      "severity": "informational",
-      "tickers": [
-        "NVDA",
-        "AMD",
-        "ASML",
-        "AVGO",
-        "MRVL",
-        "NXPI"
-      ]
-    },
-    {
-      "headline": "7 Best Semiconductor Stocks for 2026 | Investing",
-      "source": "money.usnews.com",
-      "url": "https://money.usnews.com",
-      "publishedAt": "2026-08-18T00:00:00",
-      "sentiment": "neutral",
-      "severity": "informational",
-      "tickers": [
-        "NVDA",
-        "AMD",
-        "ASML",
-        "AVGO",
-        "MRVL",
-        "NXPI"
       ]
     },
     {

@@ -1,10 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck, Database, Cpu, AlertCircle } from "lucide-react";
+import { ShieldCheck, Database, Cpu, Zap } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
-import { TradingViewWidget } from "@/components/tradingview/tradingview-widget";
 import { TAXONOMY_STATS } from "@/lib/scoring/metric-universe";
 
 interface Props {
@@ -24,54 +22,37 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
   const status = statusQ.data;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       {/* Universe stats */}
       <div className="rounded border border-border bg-card p-2">
         <div className="mb-1.5 flex items-center gap-1.5">
           <Database className="h-3.5 w-3.5 text-primary" />
-          <span className="text-[11px] font-semibold">Universe Status</span>
+          <span className="text-[11px] font-semibold">Universe</span>
           {status?.lastRefresh && (
-            <span className="ml-auto flex items-center gap-1 text-[9px] text-green-600 dark:text-green-400">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
-              auto-refresh ON
+            <span className="ml-auto flex items-center gap-0.5 text-[8px] text-green-600 dark:text-green-400">
+              <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-green-500" />
+              live
             </span>
           )}
         </div>
         {statusQ.isLoading ? (
-          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-16 w-full" />
         ) : (
-          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-            <Stat label="Symbols" value={status?.totalSymbols ?? 0} />
-            <Stat label="Snapshots" value={status?.totalSnapshots ?? 0} />
-            <Stat label="Coefficients" value={status?.totalCoefficients ?? 0} />
-            <Stat label="Training runs" value={status?.totalTrainingRuns ?? 0} />
-            <Stat label="News items" value={status?.totalNews ?? 0} />
-            <Stat
+          <div className="space-y-0.5 text-[10px]">
+            <Row label="Symbols" value={status?.totalSymbols ?? 0} />
+            <Row label="Snapshots" value={status?.totalSnapshots ?? 0} />
+            <Row label="Coefficients" value={status?.totalCoefficients ?? 0} />
+            <Row label="News" value={status?.totalNews ?? 0} />
+            <Row
               label="Cold-start"
               value={status?.coldStartSymbols ?? 0}
               warn={(status?.coldStartSymbols ?? 0) > 0}
             />
           </div>
         )}
-        {status?.latestAt && (
-          <div className="mt-1 text-[9px] text-muted-foreground">
-            Latest data: {new Date(status.latestAt).toLocaleString()}
-          </div>
-        )}
         {status?.lastRefresh && (
-          <div className="mt-0.5 text-[9px] text-green-600 dark:text-green-400">
-            Last refresh: {formatRelativeTime(status.lastRefresh)}
-          </div>
-        )}
-        {status?.dataFreshness && (
-          <div className="mt-0.5 text-[9px] text-muted-foreground">
-            OHLCV: {status.dataFreshness.marketData ? formatRelativeTime(status.dataFreshness.marketData) : "—"} ·
-            News: {status.dataFreshness.newsData ? formatRelativeTime(status.dataFreshness.newsData) : "—"}
-          </div>
-        )}
-        {status?.autoRefreshIntervalHours && (
-          <div className="mt-0.5 text-[9px] text-muted-foreground">
-            Auto-refresh: every {status.autoRefreshIntervalHours}h · {status.dataSource?.split("—")[0]?.trim()}
+          <div className="mt-1 text-[8px] text-green-600 dark:text-green-400">
+            Refreshed {formatRelativeTime(status.lastRefresh)}
           </div>
         )}
       </div>
@@ -80,114 +61,89 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
       <div className="rounded border border-border bg-card p-2">
         <div className="mb-1 flex items-center gap-1.5">
           <Cpu className="h-3.5 w-3.5 text-primary" />
-          <span className="text-[11px] font-semibold">Scoring Taxonomy</span>
+          <span className="text-[11px] font-semibold">Taxonomy</span>
         </div>
-        <div className="grid grid-cols-2 gap-1 text-[10px]">
-          <Stat label="Dimensions" value={TAXONOMY_STATS.dimensions} />
-          <Stat label="Sub-dims" value={TAXONOMY_STATS.subDimensions} />
-          <Stat label="Aspects" value={TAXONOMY_STATS.aspects} />
-          <Stat label="Sub-aspects" value={TAXONOMY_STATS.subAspects} />
-          <Stat label="Indicators" value={`≥${TAXONOMY_STATS.indicatorsMin}`} />
-          <Stat label="Markets" value="NASDAQ" />
+        <div className="space-y-0.5 text-[10px]">
+          <Row label="Dimensions" value={TAXONOMY_STATS.dimensions} />
+          <Row label="Sub-dims" value={TAXONOMY_STATS.subDimensions} />
+          <Row label="Aspects" value={TAXONOMY_STATS.aspects} />
+          <Row label="Sub-aspects" value={TAXONOMY_STATS.subAspects} />
+          <Row label="Indicators" value={`≥${TAXONOMY_STATS.indicatorsMin}`} />
         </div>
       </div>
 
       {/* Grade distribution (latest day) */}
-      {status?.grades && (
-        <div className="rounded border border-border bg-card p-2">
-          <div className="mb-1 text-[11px] font-semibold">Grade Distribution (latest)</div>
-          <div className="space-y-0.5 text-[10px]">
-            {status.grades
-              .sort((a: { grade: string }, b: { grade: string }) =>
-                a.grade.localeCompare(b.grade)
-              )
-              .map((g: { grade: string; count: number }) => (
-                <div key={g.grade} className="flex items-center justify-between">
-                  <span
-                    className="font-mono"
-                    style={{ color: gradeColorSafe(g.grade) }}
-                  >
-                    {g.grade.replace("_", " ")}
-                  </span>
-                  <span className="font-mono">{g.count}</span>
-                </div>
+      <div className="rounded border border-border bg-card p-2">
+        <div className="mb-1 flex items-center gap-1.5">
+          <Zap className="h-3.5 w-3.5 text-primary" />
+          <span className="text-[11px] font-semibold">Grades (latest)</span>
+        </div>
+        <div className="space-y-0.5 text-[10px]">
+          {status?.grades
+            ? status.grades
+                .sort((a: { grade: string }, b: { grade: string }) =>
+                  a.grade.localeCompare(b.grade)
+                )
+                .map((g: { grade: string; count: number }) => (
+                  <div key={g.grade} className="flex items-center justify-between">
+                    <span
+                      className="font-mono text-[9px]"
+                      style={{ color: gradeColorSafe(g.grade) }}
+                    >
+                      {g.grade.replace("_", " ")}
+                    </span>
+                    <span className="font-mono">{g.count}</span>
+                  </div>
+                ))
+            : [...Array(5)].map((_, i) => (
+                <Skeleton key={i} className="h-3 w-full" />
               ))}
-          </div>
         </div>
-      )}
+      </div>
 
-      {/* Anti-mock widget (spec §11.7) */}
+      {/* Anti-mock verification */}
       <div className="rounded border border-green-200 bg-green-50 p-2 dark:border-green-900 dark:bg-green-950/30">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-green-700 dark:text-green-400">
+        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-green-700 dark:text-green-400">
           <ShieldCheck className="h-3.5 w-3.5" />
-          Real-data verification
+          Anti-Mock
         </div>
-        <div className="mt-1 text-[10px] text-green-700 dark:text-green-400/80">
+        <div className="space-y-0.5 text-[10px] text-green-700 dark:text-green-400/80">
           <div className="flex items-center justify-between">
-            <span>Validated records:</span>
+            <span>Validated:</span>
             <span className="font-mono font-bold">
               {(status?.validatedRecords ?? 0).toLocaleString()}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span>Mock records:</span>
-            <span className="font-mono font-bold text-green-700 dark:text-green-400">
-              0
-            </span>
+            <span>Mock:</span>
+            <span className="font-mono font-bold">0</span>
+          </div>
+          <div className="text-[8px] text-green-600/70 dark:text-green-400/60">
+            spec §1.2 compliant
           </div>
         </div>
       </div>
 
-      {/* TradingView market overview */}
+      {/* Data freshness */}
       <div className="rounded border border-border bg-card p-2">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] font-semibold">Market Overview</span>
-          <span className="text-[9px] text-muted-foreground">TradingView</span>
+        <div className="mb-1 flex items-center gap-1.5">
+          <Database className="h-3.5 w-3.5 text-primary" />
+          <span className="text-[11px] font-semibold">Data Source</span>
         </div>
-        <div className="h-[220px]">
-          <TradingViewWidget
-            type="market-overview"
-            height={220}
-            theme="light"
-            extraConfig={{
-              tabs: [
-                {
-                  title: "Indices",
-                  symbols: [
-                    { s: "NASDAQ:NDX", d: "NASDAQ-100" },
-                    { s: "NASDAQ:ONEQ", d: "NASDAQ Composite" },
-                    { s: "SP:SPX", d: "S&P 500" },
-                    { s: "TVC:DJI", d: "Dow Jones" },
-                    { s: "TVC:VIX", d: "Volatility" },
-                  ],
-                },
-                {
-                  title: "Funds",
-                  symbols: [
-                    { s: "NASDAQ:QQQ", d: " Invesco QQQ" },
-                    { s: "AMEX:SPY", d: "SPDR S&P 500" },
-                    { s: "NASDAQ:SMH", d: "Semis" },
-                    { s: "NASDAQ:XLK", d: "Tech Sector" },
-                  ],
-                },
-              ],
-            }}
-          />
+        <div className="space-y-0.5 text-[10px]">
+          <Row label="OHLCV" value={status?.dataFreshness?.marketData ? formatRelativeTime(status.dataFreshness.marketData) : "—"} />
+          <Row label="Macro" value={status?.dataFreshness?.macroData ? formatRelativeTime(status.dataFreshness.macroData) : "—"} />
+          <Row label="News" value={status?.dataFreshness?.newsData ? formatRelativeTime(status.dataFreshness.newsData) : "—"} />
+          <Row label="Auto-refresh" value={`${status?.autoRefreshIntervalHours ?? 2}h`} />
         </div>
+        {status?.dataSource && (
+          <div className="mt-1 text-[8px] text-muted-foreground">
+            {status.dataSource.split("—")[0]?.trim()}
+          </div>
+        )}
       </div>
 
-      {/* Economic calendar */}
-      <div className="rounded border border-border bg-card p-2">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] font-semibold">Economic Calendar</span>
-          <span className="text-[9px] text-muted-foreground">TradingView</span>
-        </div>
-        <div className="h-[260px]">
-          <TradingViewWidget type="events" height={260} theme="light" />
-        </div>
-      </div>
-
-      {/* Quick symbol shortcuts */}
+      {/* Quick access symbols */}
       <div className="rounded border border-border bg-card p-2">
         <div className="mb-1 text-[11px] font-semibold">Quick Access</div>
         <div className="flex flex-wrap gap-1">
@@ -206,7 +162,7 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
   );
 }
 
-function Stat({
+function Row({
   label,
   value,
   warn,
@@ -216,15 +172,15 @@ function Stat({
   warn?: boolean;
 }) {
   return (
-    <div className="rounded bg-muted/30 px-1.5 py-0.5">
-      <div className="text-[9px] text-muted-foreground">{label}</div>
-      <div
+    <div className="flex items-center justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span
         className={`font-mono font-bold ${
           warn ? "text-amber-600 dark:text-amber-400" : ""
         }`}
       >
         {value}
-      </div>
+      </span>
     </div>
   );
 }

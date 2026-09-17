@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-09-17T03:08:40.968196",
+  "fetched_at": "2026-09-17T03:34:12.005106",
   "source": "yfinance (market macro) + FRED (economic releases) \u2014 REAL DATA",
   "macro": {
     "treasury_yield_10y": [
@@ -5789,7 +5789,7 @@
       },
       {
         "date": "2026-09-16",
-        "value": 100.35800170898438
+        "value": 100.33599853515625
       }
     ],
     "usd_eur": [
@@ -10529,7 +10529,7 @@
       },
       {
         "date": "2026-09-16",
-        "value": 102.3499984741211
+        "value": 102.30999755859375
       }
     ],
     "gold_price": [
@@ -11687,7 +11687,7 @@
       },
       {
         "date": "2026-09-16",
-        "value": 4317.0
+        "value": 4321.5
       }
     ],
     "vix": [
