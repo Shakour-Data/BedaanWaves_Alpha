@@ -52,3 +52,14 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Prisma database (local SQLite, do not track)
+/prisma/db/
+
+# Workspace archives
+workspace-*.tar
+
+# Temporary render/debug files
+analyze_render.js
+page2.html
+page_rendered.html
