@@ -16,7 +16,7 @@ import {
   SUB_DIMENSIONS,
 } from "./metric-universe";
 import { uniformWeights } from "./transforms";
-import { mulberry32 } from "./seed/generator";
+import { mulberry32 } from "./real-data-helpers";
 
 export interface TrainingSample {
   subAspectScores: Record<string, number>; // 0..100
