@@ -19,7 +19,9 @@ import {
 import { scoreMarket, type CoefficientLookup } from "../engine";
 import { learnCoefficients, type TrainingSample } from "../learner";
 
-const SCORING_DAYS = 90; // last 90 trading days (~3mo) for scoring + training
+const SCORING_DAYS = 60; // last 60 trading days (~3mo) for scoring + training
+// Need ≥55 samples (60 - 5 forward days) to exceed MIN_SAMPLES=50 and ensure
+// all symbols get warm-start per-symbol ML coefficients (not cold-start).
 
 // Build O(1) lookup map from seed tickers for performance at scale
 const SEED_MAP = new Map<string, string>();
@@ -53,6 +55,26 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const limit = hasExplicitLimit && Number.isFinite(options.limit)
     ? Math.max(0, Math.floor(options.limit as number))
     : 0;
+
+  const snapshotCount = await db.scoreSnapshot.count();
+  const hasSeedData = !force && snapshotCount > 0;
+  if (hasSeedData) {
+    const [symbols, coefficients, news, trainingRuns] = await Promise.all([
+      db.symbol.count(),
+      db.coefficient.count(),
+      db.newsItem.count(),
+      db.trainingRun.count(),
+    ]);
+    return {
+      symbols,
+      snapshots: snapshotCount,
+      coefficients,
+      news,
+      trainingRuns,
+      realDataPoints: 0,
+      elapsedMs: Date.now() - t0,
+    };
+  }
 
   if (force) {
     console.log("[seed] FORCE mode: existing seed data will be deleted");
@@ -165,8 +187,12 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const scoringDays = Math.min(SCORING_DAYS, universe.tradingDays.length);
   console.log(`[seed] Scoring ${scoringDays} days for batch symbols`);
 
+  // Score the LAST `scoringDays` dates (most recent), not the first.
+  // universe.tradingDays is already the last 90 dates (from loadRealUniverse),
+  // so we score the tail: tradingDays[ tradingDays.length - scoringDays .. end ]
+  const dayOffset = universe.tradingDays.length - scoringDays;
   for (let i = 0; i < scoringDays; i++) {
-    const day = generateRealDay(universe, i, marketReturns);
+    const day = generateRealDay(universe, dayOffset + i, marketReturns);
     const capturedAt = new Date(day.date + "T22:00:00.000Z").toISOString();
 
     // Build coefficient lookup from current training state (per-symbol, walk-forward)

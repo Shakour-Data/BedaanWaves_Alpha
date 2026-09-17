@@ -5,6 +5,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
 import { gradeFor } from "@/lib/scoring/transforms";
+import { getRealUniverse } from "@/lib/real-store";
 import type { DimensionKey } from "@/lib/scoring/metric-universe";
 
 export async function getLatestCapturedAt(): Promise<Date> {
@@ -35,9 +36,109 @@ export interface RankingsQuery {
   maxScore?: number;
   minMarketCap?: number;
   maxMarketCap?: number;
-  sort?: string; // overall | priceChange | marketCap | ticker | coverage
+  sort?: string;
   order?: "asc" | "desc";
   isEtf?: boolean | null;
+  columnFilters?: RankingColumnFilter[];
+}
+
+export type RankingColumnKey =
+  | "rank"
+  | "ticker"
+  | "overall"
+  | "delta"
+  | "grade"
+  | "price"
+  | "priceChange"
+  | "marketCap"
+  | "coverage"
+  | `dimension.${DimensionKey}`;
+
+export type RankingFilterOperator =
+  | "contains"
+  | "notContains"
+  | "equals"
+  | "notEquals"
+  | "startsWith"
+  | "endsWith"
+  | "greaterThan"
+  | "lessThan"
+  | "between"
+  | "isNull"
+  | "isNotNull";
+
+export interface RankingColumnFilter {
+  key: RankingColumnKey;
+  operator: RankingFilterOperator;
+  value?: string;
+  value2?: string;
+}
+
+const RANKING_COLUMN_KEYS = [
+  "rank",
+  "ticker",
+  "overall",
+  "delta",
+  "grade",
+  "price",
+  "priceChange",
+  "marketCap",
+  "coverage",
+  ...DIMENSION_KEYS.map((dimension) => `dimension.${dimension}`),
+];
+
+const RANKING_FILTER_OPERATORS = [
+  "contains",
+  "notContains",
+  "equals",
+  "notEquals",
+  "startsWith",
+  "endsWith",
+  "greaterThan",
+  "lessThan",
+  "between",
+  "isNull",
+  "isNotNull",
+];
+
+export function parseRankingColumnFilters(
+  value: unknown,
+): RankingColumnFilter[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const filters: RankingColumnFilter[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const candidate = item as Record<string, unknown>;
+    if (
+      typeof candidate.key !== "string" ||
+      !isRankingColumnKey(candidate.key) ||
+      typeof candidate.operator !== "string" ||
+      !isRankingFilterOperator(candidate.operator)
+    ) {
+      return null;
+    }
+
+    const filter: RankingColumnFilter = {
+      key: candidate.key as RankingColumnKey,
+      operator: candidate.operator as RankingFilterOperator,
+    };
+    if (typeof candidate.value === "string") filter.value = candidate.value;
+    if (typeof candidate.value2 === "string") filter.value2 = candidate.value2;
+    filters.push(filter);
+  }
+  return filters;
+}
+
+function isRankingColumnKey(value: string): value is RankingColumnKey {
+  if (value.startsWith("dimension.")) {
+    return DIMENSION_KEYS.includes(value.slice(10) as DimensionKey);
+  }
+  return RANKING_COLUMN_KEYS.includes(value);
+}
+
+function isRankingFilterOperator(value: string): value is RankingFilterOperator {
+  return RANKING_FILTER_OPERATORS.includes(value);
 }
 
 export interface RankingsResult {
@@ -68,130 +169,351 @@ export interface RankingsResult {
   latestAt: string;
 }
 
+type RankingRecord = {
+  ticker: string;
+  name: string;
+  sector: string;
+  industry: string;
+  marketCap: number;
+  isEtf: boolean;
+  overall: number;
+  grade: string;
+  coverage: number;
+  ciLower: number;
+  ciUpper: number;
+  price: number;
+  priceChange: number;
+  volume: number;
+  delta: number | null;
+  dimensionScores: Record<DimensionKey, number>;
+  coefficientVersion: string;
+  signals: string[];
+  rank?: number;
+};
+
+const RANKING_SORT_KEYS: RankingColumnKey[] = [
+  "rank",
+  "ticker",
+  "overall",
+  "delta",
+  "grade",
+  "price",
+  "priceChange",
+  "marketCap",
+  "coverage",
+  ...DIMENSION_KEYS.map(
+    (dimension) => `dimension.${dimension}` as `dimension.${DimensionKey}`,
+  ),
+];
+
+const GRADE_ORDER: Record<string, number> = {
+  STRONG_BULLISH: 0,
+  BULLISH: 1,
+  NEUTRAL: 2,
+  BEARISH: 3,
+  STRONG_BEARISH: 4,
+};
+
+function isNumericColumn(key: RankingColumnKey): boolean {
+  return key !== "ticker" && key !== "grade";
+}
+
+function getRankingValue(
+  record: RankingRecord,
+  key: RankingColumnKey,
+): string | number | null {
+  if (key === "rank") return record.rank ?? record.overall;
+  if (key === "ticker") return record.ticker;
+  if (key === "grade") return record.grade;
+  if (key === "marketCap") return record.marketCap;
+  if (key === "coverage") return record.coverage;
+  if (key.startsWith("dimension.")) {
+    return record.dimensionScores[key.slice(10) as DimensionKey] ?? 50;
+  }
+  return (record[key as keyof RankingRecord] as string | number | null) ?? null;
+}
+
+function getSortValue(
+  record: RankingRecord,
+  key: RankingColumnKey,
+): string | number | null {
+  if (key === "grade") return GRADE_ORDER[record.grade] ?? 99;
+  return getRankingValue(record, key);
+}
+
+function matchesColumnFilter(
+  record: RankingRecord,
+  filter: RankingColumnFilter,
+): boolean {
+  const value = getRankingValue(record, filter.key);
+  if (filter.operator === "isNull") return value === null || value === undefined;
+  if (filter.operator === "isNotNull") return value !== null && value !== undefined;
+
+  if (typeof value === "string") {
+    const actual = value.toLowerCase();
+    const expected = (filter.value ?? "").toLowerCase();
+    switch (filter.operator) {
+      case "contains":
+        return actual.includes(expected);
+      case "notContains":
+        return !actual.includes(expected);
+      case "equals":
+        return actual === expected;
+      case "notEquals":
+        return actual !== expected;
+      case "startsWith":
+        return actual.startsWith(expected);
+      case "endsWith":
+        return actual.endsWith(expected);
+      default:
+        return false;
+    }
+  }
+
+  const expected = Number(filter.value);
+  if (!Number.isFinite(expected)) return false;
+  switch (filter.operator) {
+    case "equals":
+      return value === expected;
+    case "notEquals":
+      return value !== expected;
+    case "greaterThan":
+      return value !== null && value > expected;
+    case "lessThan":
+      return value !== null && value < expected;
+    case "between": {
+      const upper = Number(filter.value2);
+      return (
+        Number.isFinite(upper) &&
+        value !== null &&
+        value >= expected &&
+        value <= upper
+      );
+    }
+    default:
+      return false;
+  }
+}
+
+function compareRankingRecords(
+  a: RankingRecord,
+  b: RankingRecord,
+  sortField: RankingColumnKey,
+  order: "asc" | "desc",
+): number {
+  const av = getRankingValue(a, sortField);
+  const bv = getRankingValue(b, sortField);
+  if (av === null || av === undefined) return 1;
+  if (bv === null || bv === undefined) return -1;
+
+  let comparison: number;
+  if (typeof av === "string" || typeof bv === "string") {
+    comparison = String(av).localeCompare(String(bv));
+  } else {
+    comparison = Number(av) - Number(bv);
+  }
+  if (comparison !== 0) return order === "asc" ? comparison : -comparison;
+  return a.ticker.localeCompare(b.ticker);
+}
+
 export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   const page = Math.max(1, q.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 25));
   const latest = await getLatestCapturedAt();
-  const prev = await getPrevCapturedAt(latest);
 
-  const where: Record<string, unknown> = {
-    capturedAt: latest,
-  };
-  if (q.search) {
-    // Prisma SQLite doesn't have full-text; use contains on related symbol.
-    // We'll filter in JS for simplicity OR use a join.
-  }
-  // Sort: default overall desc
-  const sortMap: Record<string, string> = {
-    overall: "overall",
-    priceChange: "priceChange",
-    marketCap: "marketCap", // requires relation sort — we do in JS
-    ticker: "ticker",
-    coverage: "coverage",
-    ciLower: "ciLower",
-  };
-  const sortField = sortMap[q.sort ?? "overall"] ?? "overall";
-  const order = q.order ?? "desc";
-
-  // Fetch all snapshots for the latest day (we need rank + filters across the universe)
+  // Fetch latest + previous snapshot per ticker using select (not include)
+  // to avoid loading large JSON fields (subAspectScores, aspectScores, etc.)
+  // that overwhelm the Prisma query engine with 32K+ records.
+  // We only need: overall (for delta), capturedAt, and ticker to deduplicate.
   const all = await db.scoreSnapshot.findMany({
-    where: { capturedAt: latest },
-    include: { symbol: true },
-    orderBy: [{ overall: "desc" }, { ticker: "asc" }],
+    select: {
+      ticker: true,
+      overall: true,
+      capturedAt: true,
+      symbol: {
+        select: {
+          name: true,
+          sector: true,
+          industry: true,
+          marketCap: true,
+          isEtf: true,
+        },
+      },
+    },
+    orderBy: [{ ticker: "asc" }, { capturedAt: "desc" }],
   });
 
-  // Filter in JS (Prisma SQLite filtering on JSON fields is limited)
-  let filtered = all;
-  if (q.search) {
-    const s = q.search.toLowerCase();
-    filtered = filtered.filter(
-      (r) =>
-        r.ticker.toLowerCase().includes(s) ||
-        r.symbol.name.toLowerCase().includes(s) ||
-        r.symbol.sector.toLowerCase().includes(s) ||
-        r.symbol.industry.toLowerCase().includes(s)
+  // Deduplicate: latest snapshot per ticker + previous overall for delta.
+  const latestSnapshots: typeof all = [];
+  const prevOveralls: Record<string, number> = {};
+  const latestSeen = new Set<string>();
+  for (const row of all) {
+    if (latestSeen.has(row.ticker)) {
+      if (!(row.ticker in prevOveralls)) {
+        prevOveralls[row.ticker] = row.overall;
+      }
+      continue;
+    }
+    latestSeen.add(row.ticker);
+    latestSnapshots.push(row);
+  }
+
+  // Fetch remaining fields (dimensionScores, signals, etc.) only for the
+  // latest snapshots we actually need, batched to avoid engine overload.
+  // This two-step approach fetches ~590 records instead of 32K+.
+  const tickerCaptured = latestSnapshots.map((r) => ({
+    ticker: r.ticker,
+    capturedAt: r.capturedAt,
+  }));
+  const detailRows = await db.scoreSnapshot.findMany({
+    where: {
+      OR: tickerCaptured.map((tc) => ({
+        ticker: tc.ticker,
+        capturedAt: tc.capturedAt,
+      })),
+    },
+    select: {
+      ticker: true,
+      overall: true,
+      grade: true,
+      coverage: true,
+      ciLower: true,
+      ciUpper: true,
+      price: true,
+      priceChange: true,
+      volume: true,
+      dimensionScores: true,
+      signals: true,
+      coefficientVersion: true,
+    },
+    orderBy: { ticker: "asc" },
+  });
+
+  // Merge detail fields into latest snapshots by ticker
+  const detailByTicker = new Map<string, typeof detailRows[number]>();
+  for (const d of detailRows) detailByTicker.set(d.ticker, d);
+
+  const records: RankingRecord[] = latestSnapshots.map((row) => {
+    const detail = detailByTicker.get(row.ticker);
+    if (!detail) {
+      return null;
+    }
+    const dimensionScores = JSON.parse(detail.dimensionScores) as Record<string, number>;
+    const typedDimensions = {} as Record<DimensionKey, number>;
+    for (const dimension of DIMENSION_KEYS) {
+      typedDimensions[dimension] = dimensionScores[dimension] ?? 50;
+    }
+    const previousOverall = prevOveralls[row.ticker];
+    return {
+      ticker: row.ticker,
+      name: row.symbol.name,
+      sector: row.symbol.sector,
+      industry: row.symbol.industry,
+      marketCap: row.symbol.marketCap,
+      isEtf: row.symbol.isEtf,
+      overall: row.overall,
+      grade: detail.grade,
+      coverage: detail.coverage,
+      ciLower: detail.ciLower,
+      ciUpper: detail.ciUpper,
+      price: detail.price,
+      priceChange: detail.priceChange,
+      volume: detail.volume,
+      delta: previousOverall !== undefined ? row.overall - previousOverall : null,
+      dimensionScores: typedDimensions,
+      coefficientVersion: detail.coefficientVersion,
+      signals: JSON.parse(detail.signals) as string[],
+    };
+  }).filter((r): r is RankingRecord => r !== null);
+
+  // Filter out symbols with fewer than 50 candles
+  const universe = getRealUniverse();
+  let filtered = records.filter((record) => {
+    const walk = universe?.walks.get(record.ticker);
+    return walk && walk.ohlcv.length >= 50;
+  });
+
+  const search = q.search?.trim().toLowerCase();
+  if (search) {
+    filtered = filtered.filter((record) =>
+      record.ticker.toLowerCase().includes(search) ||
+      record.name.toLowerCase().includes(search) ||
+      record.sector.toLowerCase().includes(search) ||
+      record.industry.toLowerCase().includes(search)
     );
   }
-  if (q.sector && q.sector !== "All")
-    filtered = filtered.filter((r) => r.symbol.sector === q.sector);
-  if (q.grade && q.grade !== "All")
-    filtered = filtered.filter((r) => r.grade === q.grade);
-  if (q.minScore !== undefined)
-    filtered = filtered.filter((r) => r.overall >= q.minScore!);
-  if (q.maxScore !== undefined)
-    filtered = filtered.filter((r) => r.overall <= q.maxScore!);
-  if (q.minMarketCap !== undefined)
-    filtered = filtered.filter((r) => r.symbol.marketCap >= q.minMarketCap!);
-  if (q.maxMarketCap !== undefined)
-    filtered = filtered.filter((r) => r.symbol.marketCap <= q.maxMarketCap!);
-  if (q.isEtf !== undefined && q.isEtf !== null)
-    filtered = filtered.filter((r) => r.symbol.isEtf === q.isEtf);
 
-  // Sort (default already overall desc, but re-sort if user changed)
-  if (sortField !== "overall" || order === "asc") {
-    filtered = filtered.slice().sort((a, b) => {
-      let av: number | string, bv: number | string;
-      if (sortField === "marketCap") {
-        av = a.symbol.marketCap; bv = b.symbol.marketCap;
-      } else if (sortField === "ticker") {
-        av = a.ticker; bv = b.ticker;
-        return order === "asc"
-          ? String(av).localeCompare(String(bv))
-          : String(bv).localeCompare(String(av));
-      } else {
-        av = (a as unknown as Record<string, number>)[sortField] ?? 0;
-        bv = (b as unknown as Record<string, number>)[sortField] ?? 0;
-      }
-      return order === "asc"
-        ? (av as number) - (bv as number)
-        : (bv as number) - (av as number);
-    });
+  if (q.sector && q.sector !== "All") {
+    filtered = filtered.filter((record) => record.sector === q.sector);
+  }
+  if (q.grade && q.grade !== "All") {
+    filtered = filtered.filter((record) => record.grade === q.grade);
+  }
+  if (q.minScore !== undefined) {
+    filtered = filtered.filter((record) => record.overall >= q.minScore!);
+  }
+  if (q.maxScore !== undefined) {
+    filtered = filtered.filter((record) => record.overall <= q.maxScore!);
+  }
+  if (q.minMarketCap !== undefined) {
+    filtered = filtered.filter((record) => record.marketCap >= q.minMarketCap!);
+  }
+  if (q.maxMarketCap !== undefined) {
+    filtered = filtered.filter((record) => record.marketCap <= q.maxMarketCap!);
+  }
+  if (q.isEtf !== undefined && q.isEtf !== null) {
+    filtered = filtered.filter((record) => record.isEtf === q.isEtf);
+  }
+
+  const columnFilters = q.columnFilters ?? [];
+  const nonRankFilters = columnFilters.filter((filter) => filter.key !== "rank");
+  filtered = filtered.filter((record) =>
+    nonRankFilters.every((filter) => matchesColumnFilter(record, filter)),
+  );
+
+  const requestedSort = q.sort;
+  const sortField = RANKING_SORT_KEYS.includes(requestedSort as RankingColumnKey)
+    ? (requestedSort as RankingColumnKey)
+    : "overall";
+  const order = q.order === "asc" ? "asc" : "desc";
+  filtered = filtered
+    .slice()
+    .sort((a, b) => compareRankingRecords(a, b, sortField, order));
+
+  filtered = filtered.map((record, index) => ({ ...record, rank: index + 1 }));
+  const rankFilters = columnFilters.filter((filter) => filter.key === "rank");
+  if (rankFilters.length > 0) {
+    filtered = filtered.filter((record) =>
+      rankFilters.every((filter) => matchesColumnFilter(record, filter)),
+    );
   }
 
   const total = filtered.length;
   const start = (page - 1) * pageSize;
   const pageRows = filtered.slice(start, start + pageSize);
 
-  // Fetch prev-day overalls for delta computation
-  const prevOveralls: Record<string, number> = {};
-  if (prev) {
-    const prevRows = await db.scoreSnapshot.findMany({
-      where: { capturedAt: prev },
-      select: { ticker: true, overall: true },
-    });
-    for (const r of prevRows) prevOveralls[r.ticker] = r.overall;
-  }
-
-  const rows = pageRows.map((r, idx) => {
-    const dimScores = JSON.parse(r.dimensionScores) as Record<string, number>;
-    const dimScoresTyped: Record<DimensionKey, number> = {} as Record<DimensionKey, number>;
-    for (const d of DIMENSION_KEYS) dimScoresTyped[d] = dimScores[d] ?? 50;
-    const prevOverall = prevOveralls[r.ticker];
-    return {
-      rank: start + idx + 1,
-      ticker: r.ticker,
-      name: r.symbol.name,
-      sector: r.symbol.sector,
-      industry: r.symbol.industry,
-      marketCap: r.symbol.marketCap,
-      isEtf: r.symbol.isEtf,
-      overall: r.overall,
-      grade: r.grade,
-      coverage: r.coverage,
-      ciLower: r.ciLower,
-      ciUpper: r.ciUpper,
-      price: r.price,
-      priceChange: r.priceChange,
-      volume: r.volume,
-      delta: prevOverall !== undefined ? r.overall - prevOverall : null,
-      dimensionScores: dimScoresTyped,
-      coefficientVersion: r.coefficientVersion,
-      signals: JSON.parse(r.signals) as string[],
-    };
-  });
-
   return {
-    rows,
+    rows: pageRows.map((record) => ({
+      rank: record.rank ?? 0,
+      ticker: record.ticker,
+      name: record.name,
+      sector: record.sector,
+      industry: record.industry,
+      marketCap: record.marketCap,
+      isEtf: record.isEtf,
+      overall: record.overall,
+      grade: record.grade,
+      coverage: record.coverage,
+      ciLower: record.ciLower,
+      ciUpper: record.ciUpper,
+      price: record.price,
+      priceChange: record.priceChange,
+      volume: record.volume,
+      delta: record.delta,
+      dimensionScores: record.dimensionScores,
+      coefficientVersion: record.coefficientVersion,
+      signals: record.signals,
+    })),
     total,
     page,
     pageSize,
@@ -406,7 +728,7 @@ export async function fetchDecomposition(ticker: string) {
 }
 
 // ─── Peer comparison (selected vs 5 nearest by sector + market cap) ───────────
-export async function fetchPeers(ticker: string) {
+export async function fetchPeers(ticker: string, compareTicker?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
   const latest = await getLatestCapturedAt();
@@ -419,8 +741,14 @@ export async function fetchPeers(ticker: string) {
     .sort((a, b) => a.dist - b.dist)
     .slice(0, 5);
   const peerTickers = sorted.map((x) => x.s.ticker);
+  
+  // Include custom compare ticker if provided and not already in peer list
+  const allTickers = compareTicker && !peerTickers.includes(compareTicker) && compareTicker !== sym.ticker
+    ? [sym.ticker, ...peerTickers, compareTicker]
+    : [sym.ticker, ...peerTickers];
+    
   const snaps = await db.scoreSnapshot.findMany({
-    where: { capturedAt: latest, ticker: { in: [sym.ticker, ...peerTickers] } },
+    where: { capturedAt: latest, ticker: { in: allTickers } },
     include: { symbol: true },
   });
   const rows = snaps.map((s) => {
@@ -447,7 +775,7 @@ export async function fetchPeers(ticker: string) {
       percentileRanks[t][d] = Math.round(((i + 1) / n) * 100);
     }
   }
-  return { symbol: sym, peers: rows, percentileRanks, latestAt: latest.toISOString() };
+  return { symbol: sym, peers: rows, percentileRanks, latestAt: latest.toISOString(), compareTicker };
 }
 
 // ─── News ribbon ────────────────────────────────────────────────────────────────

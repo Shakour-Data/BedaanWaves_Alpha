@@ -49,10 +49,15 @@ export function HistoricalScoreChart({ ticker }: Props) {
 
   const { data, isLoading } = useQuery({
     queryKey: ["history", ticker, range],
-    queryFn: async () => {
+    queryFn: async (): Promise<HistoryPoint[]> => {
       const r = await fetch(`/api/scores/${ticker}/history?range=${range}`);
+      if (!r.ok) {
+        if (r.status === 404) return [];
+        const body = await r.json().catch(() => null);
+        throw new Error(body?.error ?? `HTTP ${r.status}`);
+      }
       const j = await r.json();
-      return j.points as HistoryPoint[];
+      return Array.isArray(j.points) ? j.points : [];
     },
     enabled: !!ticker,
   });

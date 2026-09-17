@@ -80,6 +80,7 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
       const r = await fetch(`/api/scores/${ticker}`);
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
+        if (r.status === 404) return null;
         throw new Error(body?.error ?? `HTTP ${r.status}`);
       }
       const data = await r.json();

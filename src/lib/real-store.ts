@@ -3,7 +3,7 @@
 // fundamentals), real-macro-data.json (real published government statistics),
 // real-news-data.json (real headlines). Memoized so the 4 MB market file is
 // parsed once per server process instead of on every request.
-import { readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { loadRealUniverse, type LoadedUniverse } from "@/lib/scoring/seed/real-data";
 
@@ -14,6 +14,52 @@ export interface RealBar {
   low: number;
   close: number;
   volume: number;
+}
+
+const CANDLE_FALLBACK_FILE = join(
+  process.cwd(),
+  "src/lib/scoring/seed/real-market-data.json.tmp"
+);
+
+interface CandleFallbackData {
+  per_ticker?: Record<string, { ohlcv?: RealBar[] }>;
+}
+
+let candleFallbackCache: {
+  size: number;
+  mtimeMs: number;
+  data: CandleFallbackData;
+} | null = null;
+
+function getCandleFallbackData(): CandleFallbackData | null {
+  if (!existsSync(CANDLE_FALLBACK_FILE)) return null;
+
+  let fileStats: ReturnType<typeof statSync> | undefined;
+  try {
+    fileStats = statSync(CANDLE_FALLBACK_FILE);
+  } catch {
+    return null;
+  }
+
+  if (
+    candleFallbackCache &&
+    candleFallbackCache.size === fileStats.size &&
+    candleFallbackCache.mtimeMs === fileStats.mtimeMs
+  ) {
+    return candleFallbackCache.data;
+  }
+
+  try {
+    const data = JSON.parse(readFileSync(CANDLE_FALLBACK_FILE, "utf-8")) as CandleFallbackData;
+    candleFallbackCache = {
+      size: fileStats.size,
+      mtimeMs: fileStats.mtimeMs,
+      data,
+    };
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 export interface MacroPoint {
@@ -109,15 +155,17 @@ const RANGE_TO_DAYS: Record<string, number> = {
 };
 
 export function getCandles(ticker: string, range = "3M"): RealBar[] {
-  const u = getRealUniverse();
-  if (!u) return [];
-  const walk = u.walks.get(ticker.toUpperCase());
-  if (!walk) return [];
+  const symbol = ticker.toUpperCase();
   const days = RANGE_TO_DAYS[range] ?? 90;
-  const bars = walk.ohlcv;
-  return bars.length
-    ? bars.slice(Math.max(0, bars.length - days))
-    : [];
+  const universe = getRealUniverse();
+  const walk = universe?.walks.get(symbol);
+  if (walk?.ohlcv.length) {
+    return walk.ohlcv.slice(Math.max(0, walk.ohlcv.length - days));
+  }
+
+  const fallback = getCandleFallbackData();
+  const bars = fallback?.per_ticker?.[symbol]?.ohlcv ?? [];
+  return bars.slice(Math.max(0, bars.length - days));
 }
 
 // ── Macro indicators (market-traded + economic releases) ───────────────────────

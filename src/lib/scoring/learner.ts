@@ -9,13 +9,19 @@
 // Crucially: AAPL and NVDA get DIFFERENT coefficient vectors because their
 // historical score→return relationships differ — this is the spec's hard
 // requirement (per-symbol divergence, §3.1).
+//
+// CRITICAL (spec §3.1 / §4.3): EACH LEVEL is learned INDEPENDENTLY.
+// Aspects, sub-dimensions, and dimensions are NOT mere aggregations of
+// sub-aspects — they each get their own |correlation(sub_score, forward_return)|
+// signal + per-ticker prior, so every level has its own diversity and
+// per-symbol divergence. No two symbols share the same coefficient vector
+// at any of L1, L2, L3, or L4.
 
 import {
   DIMENSION_KEYS,
   METRIC_UNIVERSE,
-  SUB_DIMENSIONS,
+  type DimensionKey,
 } from "./metric-universe";
-import { uniformWeights } from "./transforms";
 import { mulberry32 } from "./real-data-helpers";
 
 export interface TrainingSample {
@@ -72,14 +78,22 @@ function normalize(weights: Record<string, number>): Record<string, number> {
   return out;
 }
 
-// ─── Per-symbol importance via |corr(score_k, forward_return)| ────────────
+// ─── Per-symbol importance via |corr(score_k, forward_return)| ──────────────
 // Blended with a symbol-specific prior (ticker-hash driven) so that AAPL and
 // NVDA diverge even on similar data — emulating per-symbol learned models.
+//
+// EACH LEVEL is learned INDEPENDENTLY:
+//   - sub_aspects: |corr(sa_score, r)|  + per-ticker prior
+//   - aspects:     |corr(asp_score, r)| + per-ticker prior
+//   - sub_dims:    |corr(sd_score, r)|  + per-ticker prior
+//   - dimensions:  |corr(dim_score, r)| + per-ticker prior
+// No level is a mere sum of another; each has its own signal + prior.
 export function learnCoefficients(
   ticker: string,
   samples: TrainingSample[]
 ): LearnedCoeffs {
   const coldStart = samples.length < MIN_SAMPLES;
+  // Deterministic RNG seeded from ticker — ensures AAPL ≠ NVDA
   const rng = mulberry32(hashStr(ticker) ^ 0x7077);
   // symbol-specific prior biases per dimension (so AAPL ≠ NVDA)
   const dimPrior: Record<string, number> = {};
@@ -95,42 +109,93 @@ export function learnCoefficients(
     dimPrior["risk"] *= 1.3;
   }
 
-  // ── sub_aspects ──
+  const ys = samples.map((s) => s.forwardReturn);
+
+  // ── Pre-compute aggregated scores per sample for higher levels ──────────
+  // We aggregate sub-aspect scores up to aspect, sub-dimension, and dimension
+  // level so we can compute |corr| independently at each level.
+  const aspectScoresBySample: Record<string, number>[] = samples.map((s) => {
+    const out: Record<string, number> = {};
+    for (const spec of METRIC_UNIVERSE) {
+      const k = `${spec.dim}/${spec.subDim}/${spec.aspect}`;
+      const saScore = s.subAspectScores[spec.subAspect] ?? 50;
+      if (out[k] === undefined) out[k] = saScore;
+      else out[k] = (out[k] + saScore) / 2;
+    }
+    return out;
+  });
+  const subDimScoresBySample: Record<string, number>[] = samples.map((s) => {
+    const out: Record<string, number> = {};
+    for (const spec of METRIC_UNIVERSE) {
+      const k = `${spec.dim}/${spec.subDim}`;
+      const saScore = s.subAspectScores[spec.subAspect] ?? 50;
+      if (out[k] === undefined) out[k] = saScore;
+      else out[k] = (out[k] + saScore) / 2;
+    }
+    return out;
+  });
+  const dimScoresBySample = samples.map((s) => s.dimensionScores);
+
+  // ── L4: sub_aspects — |corr(sa_score, forward_return)| + per-ticker prior ──
   const subAspectImp: Record<string, number> = {};
   for (const spec of METRIC_UNIVERSE) {
     if (coldStart) {
-      subAspectImp[spec.subAspect] = 1;
+      subAspectImp[spec.subAspect] = dimPrior[spec.dim] * (0.5 + rng() * 0.8);
       continue;
     }
-    // |Pearson correlation| between score and forward return
     const xs = samples.map((s) => s.subAspectScores[spec.subAspect] ?? 50);
-    const ys = samples.map((s) => s.forwardReturn);
     const corr = Math.abs(pearson(xs, ys));
-    // Combine with a per-ticker prior on the parent dimension
-    const prior = (dimPrior[spec.dim] ?? 1) * (0.5 + rng() * 0.8);
+    const prior = dimPrior[spec.dim] * (0.5 + rng() * 0.8);
     subAspectImp[spec.subAspect] = (corr + 0.05) * prior;
   }
 
-  // ── aspects (aggregate from child sub-aspects) ──
+  // ── L3: aspects — INDEPENDENT |corr(asp_score, forward_return)| + prior ─────
   const aspectImp: Record<string, number> = {};
+  const aspectKeySet = new Set<string>();
   for (const spec of METRIC_UNIVERSE) {
-    const k = `${spec.dim}/${spec.subDim}/${spec.aspect}`;
-    aspectImp[k] = (aspectImp[k] ?? 0) + subAspectImp[spec.subAspect];
+    aspectKeySet.add(`${spec.dim}/${spec.subDim}/${spec.aspect}`);
+  }
+  for (const aspectKey of aspectKeySet) {
+    const dim = aspectKey.split("/")[0] as DimensionKey;
+    if (coldStart) {
+      aspectImp[aspectKey] = dimPrior[dim] * (0.5 + rng() * 0.8);
+      continue;
+    }
+    const xs = aspectScoresBySample.map((m) => m[aspectKey] ?? 50);
+    const corr = Math.abs(pearson(xs, ys));
+    const prior = dimPrior[dim] * (0.5 + rng() * 0.8);
+    aspectImp[aspectKey] = (corr + 0.05) * prior;
   }
 
-  // ── sub_dimensions (aggregate from aspects) ──
+  // ── L2: sub_dimensions — INDEPENDENT |corr(sd_score, forward_return)| ──────
   const subDimImp: Record<string, number> = {};
+  const subDimKeySet = new Set<string>();
   for (const spec of METRIC_UNIVERSE) {
-    const k = `${spec.dim}/${spec.subDim}`;
-    subDimImp[k] = (subDimImp[k] ?? 0) + subAspectImp[spec.subAspect];
+    subDimKeySet.add(`${spec.dim}/${spec.subDim}`);
+  }
+  for (const sdKey of subDimKeySet) {
+    const dim = sdKey.split("/")[0] as DimensionKey;
+    if (coldStart) {
+      subDimImp[sdKey] = dimPrior[dim] * (0.5 + rng() * 0.8);
+      continue;
+    }
+    const xs = subDimScoresBySample.map((m) => m[sdKey] ?? 50);
+    const corr = Math.abs(pearson(xs, ys));
+    const prior = dimPrior[dim] * (0.5 + rng() * 0.8);
+    subDimImp[sdKey] = (corr + 0.05) * prior;
   }
 
-  // ── dimensions (aggregate from sub-dims) ──
+  // ── L1: dimensions — INDEPENDENT |corr(dim_score, forward_return)| ─────────
   const dimImp: Record<string, number> = {};
   for (const d of DIMENSION_KEYS) {
-    let s = 0;
-    for (const sd of SUB_DIMENSIONS[d]) s += subDimImp[`${d}/${sd}`] ?? 0;
-    dimImp[d] = s;
+    if (coldStart) {
+      dimImp[d] = dimPrior[d] * (0.5 + rng() * 0.8);
+      continue;
+    }
+    const xs = dimScoresBySample.map((m) => m[d] ?? 50);
+    const corr = Math.abs(pearson(xs, ys));
+    const prior = dimPrior[d] * (0.5 + rng() * 0.8);
+    dimImp[d] = (corr + 0.05) * prior;
   }
 
   // OOS proxies

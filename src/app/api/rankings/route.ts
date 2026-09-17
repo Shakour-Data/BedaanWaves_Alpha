@@ -1,9 +1,22 @@
 // GET /api/rankings — paginated, filtered, sorted NASDAQ rankings (latest day)
 import { NextRequest, NextResponse } from "next/server";
-import { fetchRankings } from "@/lib/scoring/queries";
+import { fetchRankings, parseRankingColumnFilters } from "@/lib/scoring/queries";
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
+  let columnFilters;
+  const rawColumnFilters = sp.get("columnFilters");
+  if (rawColumnFilters) {
+    try {
+      columnFilters = parseRankingColumnFilters(JSON.parse(rawColumnFilters));
+    } catch {
+      columnFilters = null;
+    }
+    if (columnFilters === null) {
+      return NextResponse.json({ error: "Invalid column filters" }, { status: 400 });
+    }
+  }
+
   const res = await fetchRankings({
     page: sp.get("page") ? Number(sp.get("page")) : 1,
     pageSize: sp.get("pageSize") ? Number(sp.get("pageSize")) : 25,
@@ -19,6 +32,7 @@ export async function GET(req: NextRequest) {
     isEtf: sp.get("isEtf") === null || sp.get("isEtf") === undefined
       ? null
       : sp.get("isEtf") === "true",
+    columnFilters,
   });
   return NextResponse.json(res);
 }

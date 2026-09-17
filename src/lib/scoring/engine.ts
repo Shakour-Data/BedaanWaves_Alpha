@@ -67,13 +67,18 @@ export function getDynamicWeights(
     return METRIC_UNIVERSE.map((m) => m.subAspect);
   })();
 
+  // Support both CoefficientBundle (.weights nested) and flat weights records
+  // (weights spread directly on the object with a `level` key, as passed from scoreMarket).
+  const weights = (bundle as any)?.weights ?? (bundle as any);
+
   if (
     bundle &&
     !bundle.coldStart &&
     bundle.level === level &&
-    isValidCoefficients(bundle.weights, keysForLevel)
+    weights &&
+    isValidCoefficients(weights, keysForLevel)
   ) {
-    return { weights: bundle.weights, coldStart: false };
+    return { weights, coldStart: false };
   }
   return { weights: uniformWeights(keysForLevel), coldStart: true };
 }
@@ -141,7 +146,9 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
     }
     const coverage = present / METRIC_UNIVERSE.length;
 
-    // Step 4 — L3 aspects: weighted mean of child sub-aspects using per-symbol weights
+    // Step 4 — L3 aspects: weighted mean of child sub-aspects using per-symbol
+    // sub-aspect weights (spec §5 Step 4: w_symbol[sa] — each sub-aspect gets
+    // its own weight, so sub_aspt coefficients actually differentiate children).
     const l3: Record<string, number> = {};
     const aspectsByParent = new Map<string, string[]>();
     for (const spec of METRIC_UNIVERSE) {
@@ -149,21 +156,21 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
       if (!aspectsByParent.has(key)) aspectsByParent.set(key, []);
       aspectsByParent.get(key)!.push(spec.subAspect);
     }
-    const l3Weights = coeffs?.aspects ?? null;
-    const l3Lookup = getDynamicWeights(ticker, "aspects", l3Weights ? { ...l3Weights, level: "aspects" } as CoefficientBundle : null);
+    const l4Weights = coeffs?.sub_aspects ?? null;
+    const l4Lookup = getDynamicWeights(ticker, "sub_aspects", l4Weights ? { ...l4Weights, level: "sub_aspects" } as CoefficientBundle : null);
     for (const [aspectKey, childSubs] of aspectsByParent) {
-      const w = childSubs.map((sa) => l3Lookup.weights[aspectKey] ?? 1 / childSubs.length);
-      // spec §5 Step 4: aspect_score = Σ sub·w / Σ w  → coverage_weighted_mean
+      const w = childSubs.map((sa) => l4Lookup.weights[sa] ?? 1 / childSubs.length);
       l3[aspectKey] = coverageWeightedMean(
         childSubs.map((sa) => l4[sa]),
         w
       );
     }
 
-    // Step 5 — L2 sub-dimensions: coverage-weighted mean of child aspects, per-symbol weights
+    // Step 5 — L2 sub-dimensions: weighted mean of child aspects using per-symbol
+    // aspect weights (each aspect gets its own weight → aspect coefficients matter).
     const l2: Record<string, number> = {};
-    const l2Weights = coeffs?.sub_dimensions ?? null;
-    const l2Lookup = getDynamicWeights(ticker, "sub_dimensions", l2Weights ? { ...l2Weights, level: "sub_dimensions" } as CoefficientBundle : null);
+    const l3Weights = coeffs?.aspects ?? null;
+    const l3Lookup = getDynamicWeights(ticker, "aspects", l3Weights ? { ...l3Weights, level: "aspects" } as CoefficientBundle : null);
     for (const dim of DIMENSION_KEYS) {
       for (const sd of SUB_DIMENSIONS[dim]) {
         const key = `${dim}/${sd}`;
@@ -174,7 +181,7 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
             ).map((m) => m.aspect)
           )
         ).map((a) => `${dim}/${sd}/${a}`);
-        const w = childAspects.map((a) => l2Lookup.weights[key] ?? 1 / childAspects.length);
+        const w = childAspects.map((a) => l3Lookup.weights[a] ?? 1 / childAspects.length);
         l2[key] = coverageWeightedMean(
           childAspects.map((a) => l3[a] ?? 50),
           w
@@ -182,21 +189,24 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
       }
     }
 
-    // Step 6 — L1 dimensions: coverage-weighted mean of child sub-dims, per-symbol weights
+    // Step 6 — L1 dimensions: weighted mean of child sub-dims using per-symbol
+    // sub-dimension weights (each sub-dim gets its own weight → sub_dim coeffs matter).
     const l1: Record<DimensionKey, number> = {} as Record<DimensionKey, number>;
-    const l1Weights = coeffs?.dimensions ?? null;
-    const l1Lookup = getDynamicWeights(ticker, "dimensions", l1Weights ? { ...l1Weights, level: "dimensions" } as CoefficientBundle : null);
+    const l2Weights = coeffs?.sub_dimensions ?? null;
+    const l2Lookup = getDynamicWeights(ticker, "sub_dimensions", l2Weights ? { ...l2Weights, level: "sub_dimensions" } as CoefficientBundle : null);
     for (const dim of DIMENSION_KEYS) {
       const childKeys = SUB_DIMENSIONS[dim].map((sd) => `${dim}/${sd}`);
-      const w = childKeys.map(() => l1Lookup.weights[dim] ?? 1 / childKeys.length);
+      const w = childKeys.map((k) => l2Lookup.weights[k] ?? 1 / childKeys.length);
       l1[dim] = coverageWeightedMean(
         childKeys.map((k) => l2[k] ?? 50),
         w
       );
     }
 
-    // Step 7 — overall: Σ dim·w / Σ w  (per-symbol dynamic)
+    // Step 7 — overall: Σ dim·w / Σ w  (per-symbol dynamic, uses dimension weights)
     const dimValues = DIMENSION_KEYS.map((d) => l1[d]);
+    const l1Weights = coeffs?.dimensions ?? null;
+    const l1Lookup = getDynamicWeights(ticker, "dimensions", l1Weights ? { ...l1Weights, level: "dimensions" } as CoefficientBundle : null);
     const dimW = DIMENSION_KEYS.map((d) => l1Lookup.weights[d]);
     let overall = 0;
     let wsum = 0;

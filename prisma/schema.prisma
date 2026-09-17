@@ -1,6 +1,3 @@
-// BedaanWaves — Prisma schema (SQLite)
-// NASDAQ-exclusive per-symbol ML-learned hierarchical scoring engine.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,60 +7,49 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Universe ──────────────────────────────────────────────────────────────
 model Symbol {
-  ticker     String   @id // e.g. "AAPL"
-  name       String
-  exchange   String   @default("NASDAQ")
-  sector     String
-  industry   String
-  marketCap  Float    // USD
-  isEtf      Boolean  @default(false)
-  listedAt   DateTime?
-  createdAt  DateTime @default(now())
-
-  metrics      ScoreSnapshot[]
-  coefficients Coefficient[]
+  ticker           String           @id
+  name             String
+  exchange         String           @default("NASDAQ")
+  sector           String
+  industry         String
+  marketCap        Float
+  isEtf            Boolean          @default(false)
+  listedAt         DateTime?
+  createdAt        DateTime         @default(now())
+  alerts           Alert[]
+  coefficients     Coefficient[]
+  newsMentions     NewsItemSymbol[]
+  metrics          ScoreSnapshot[]
   watchlistEntries WatchlistEntry[]
-  alerts       Alert[]
-  newsMentions NewsItemSymbol[]
 
   @@index([sector])
   @@index([marketCap])
 }
 
-// ─── Per-day hierarchical scores (the production output of V2 engine) ──────
 model ScoreSnapshot {
   id                 String   @id @default(cuid())
   ticker             String
-  capturedAt        DateTime // UTC; aligned to America/New_York trading day
-  // Raw OHLCV + price context (yfinance-equivalent, real-validated)
-  price             Float
-  priceChange       Float    // % vs prior close
-  volume            Float
-
-  // Hierarchical scores (JSON). L4 sub-aspects are precomputed.
-  subAspectScores   String   // JSON: { "rsi_14": 62.3, ... } (173 keys)
-  aspectScores      String   // JSON: { key: 0-100 } (135 keys)
-  subDimensionScores String   // JSON: { key: 0-100 } (44 keys)
-  dimensionScores   String   // JSON: { fundamental: 71, technical: 65, ... } (6 keys)
-  overall           Float    // 0-100
-  grade             String   // STRONG_BULLISH | BULLISH | NEUTRAL | BEARISH | STRONG_BEARISH
-  signals           String   // JSON array: ["strong_technical","positive_fundamental"]
-
-  // Uncertainty & stability (conformal split calibration + rolling std)
-  ciLower           Float
-  ciUpper           Float
-  stabilityIndex    Float    // rolling 5d std of overall
-  coverage          Float    // 0-1
-
-  // Lineage / anti-mock
-  isProcessed       Boolean  @default(true)
-  dataQuality       String   @default("VALIDATED") // VALIDATED | PROVISIONAL | STALE | REJECTED
-  coefficientVersion String   // hash of the coefficient bundle used
-  rawDataHash       String   // hash of inputs
-
-  symbol            Symbol   @relation(fields: [ticker], references: [ticker])
+  capturedAt         DateTime
+  price              Float
+  priceChange        Float
+  volume             Float
+  subAspectScores    String
+  aspectScores       String
+  subDimensionScores String
+  dimensionScores    String
+  overall            Float
+  grade              String
+  signals            String
+  ciLower            Float
+  ciUpper            Float
+  stabilityIndex     Float
+  coverage           Float
+  isProcessed        Boolean  @default(true)
+  dataQuality        String   @default("VALIDATED")
+  coefficientVersion String
+  rawDataHash        String
+  symbol             Symbol   @relation(fields: [ticker], references: [ticker])
 
   @@unique([ticker, capturedAt])
   @@index([capturedAt])
@@ -71,106 +57,100 @@ model ScoreSnapshot {
   @@index([grade])
 }
 
-// ─── Per-symbol learned coefficient bundle (one row per symbol + level) ────
 model Coefficient {
-  id            String   @id @default(cuid())
-  ticker        String
-  level         String   // dimensions | sub_dimensions | aspects | sub_aspects | timeframe
-  weights       String   // JSON: { key: weight } — values ∈ [0,1], sum=1.0 ±1e-6
-  trainedAt    DateTime
-  sampleCount  Int
-  version      String   // uuid-like
-  dataHash     String   // hash of training data slice
-  driftStatus  String   @default("OK") // OK | DRIFT | RETRAINED
-  oosR2        Float?
-  oosIc        Float?
-  shapTopKeys  String?  // JSON array of top SHAP keys
-  meta         String?  // JSON: regime, coldStart bool
-
-  symbol        Symbol   @relation(fields: [ticker], references: [ticker])
+  id          String   @id @default(cuid())
+  ticker      String
+  level       String
+  weights     String
+  trainedAt   DateTime
+  sampleCount Int
+  version     String
+  dataHash    String
+  driftStatus String   @default("OK")
+  oosR2       Float?
+  oosIc       Float?
+  shapTopKeys String?
+  meta        String?
+  symbol      Symbol   @relation(fields: [ticker], references: [ticker])
 
   @@unique([ticker, level])
   @@index([ticker])
 }
 
-// ─── News ribbon ───────────────────────────────────────────────────────────
 model NewsItem {
-  id          String   @id @default(cuid())
+  id          String           @id @default(cuid())
   headline    String
   source      String
   url         String?
   publishedAt DateTime
-  sentiment   String   // bullish | bearish | neutral
-  severity    String   // critical | notable | informational
+  sentiment   String
+  severity    String
   tickers     NewsItemSymbol[]
 
   @@index([publishedAt])
 }
 
 model NewsItemSymbol {
-  id        String   @id @default(cuid())
+  id         String   @id @default(cuid())
   newsItemId String
-  ticker    String
-  newsItem  NewsItem @relation(fields: [newsItemId], references: [id], onDelete: Cascade)
-  symbol    Symbol   @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
+  ticker     String
+  symbol     Symbol   @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
+  newsItem   NewsItem @relation(fields: [newsItemId], references: [id], onDelete: Cascade)
 
   @@unique([newsItemId, ticker])
 }
 
-// ─── Watchlists (localStorage for anon; DB-backed when persisted) ──────────
 model Watchlist {
-  id        String   @id @default(cuid())
+  id        String           @id @default(cuid())
   name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
   entries   WatchlistEntry[]
 
   @@index([name])
 }
 
 model WatchlistEntry {
-  id           String    @id @default(cuid())
-  watchlistId  String
-  ticker       String
-  addedAt      DateTime  @default(now())
-  watchlist    Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
-  symbol       Symbol    @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  watchlistId String
+  ticker      String
+  addedAt     DateTime  @default(now())
+  symbol      Symbol    @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
 
   @@unique([watchlistId, ticker])
 }
 
-// ─── Alerts ────────────────────────────────────────────────────────────────
 model Alert {
-  id         String   @id @default(cuid())
-  ticker     String
+  id          String    @id @default(cuid())
+  ticker      String
   watchlistId String?
-  metric     String   // overall | fundamental | technical | sentiment | risk | macro | ai
-  condition  String   // crosses_above | crosses_below
-  threshold  Float
-  active     Boolean  @default(true)
+  metric      String
+  condition   String
+  threshold   Float
+  active      Boolean   @default(true)
   triggeredAt DateTime?
-  createdAt  DateTime @default(now())
-  symbol     Symbol   @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  symbol      Symbol    @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
 
   @@index([ticker])
   @@index([active])
 }
 
-// ─── Training run audit trail (observability) ──────────────────────────────
 model TrainingRun {
-  id            String   @id @default(cuid())
-  ticker        String
-  level         String
-  startedAt     DateTime
-  durationMs    Int
-  sampleCount   Int
-  oosR2         Float?
-  oosIc         Float?
-  driftPsi      Float?
-  regime        String   // calm | stressed
-  status        String   // success | fallback_uniform | failed
-  version       String
-  notes         String?
+  id          String   @id @default(cuid())
+  ticker      String
+  level       String
+  startedAt   DateTime
+  durationMs  Int
+  sampleCount Int
+  oosR2       Float?
+  oosIc       Float?
+  driftPsi    Float?
+  regime      String
+  status      String
+  version     String
+  notes       String?
 
   @@index([ticker])
   @@index([startedAt])

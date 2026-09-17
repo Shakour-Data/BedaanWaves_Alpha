@@ -114,9 +114,11 @@ seed.out
 /check_major.py
 /check_mcap.py
 /check_real_data.py
+/check_rankings_db.ts
 /count_universe.py
 /filter_top500.py
 /fix_top_symbols.py
+/test_rankings_query.ts
 
 # Generated symbol lists
 scripts/top_symbols.json

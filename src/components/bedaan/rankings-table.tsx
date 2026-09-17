@@ -1,8 +1,17 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Filter, Download, Loader2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Download,
+  Filter,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,9 +22,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Label } from "@/components/ui/label";
 import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
 import { gradeColor } from "@/lib/scoring/transforms";
+import type {
+  RankingColumnFilter,
+  RankingColumnKey,
+  RankingFilterOperator,
+} from "@/lib/scoring/queries";
 
 interface Props {
   selectedTicker: string | null;
@@ -43,7 +63,155 @@ interface RankingRow {
   coefficientVersion: string;
 }
 
+type ColumnKind = "text" | "number";
+
+interface ColumnDefinition {
+  key: RankingColumnKey;
+  label: string;
+  shortLabel?: string;
+  kind: ColumnKind;
+  align?: "left" | "right";
+  className?: string;
+}
+
 const GRADES = ["All", "STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"];
+
+const TEXT_OPERATORS: Array<{ value: RankingFilterOperator; label: string }> = [
+  { value: "contains", label: "Contains" },
+  { value: "notContains", label: "Does not contain" },
+  { value: "equals", label: "Equals" },
+  { value: "notEquals", label: "Does not equal" },
+  { value: "startsWith", label: "Starts with" },
+  { value: "endsWith", label: "Ends with" },
+  { value: "isNull", label: "Is empty" },
+  { value: "isNotNull", label: "Is not empty" },
+];
+
+const NUMBER_OPERATORS: Array<{ value: RankingFilterOperator; label: string }> = [
+  { value: "equals", label: "Equals" },
+  { value: "notEquals", label: "Does not equal" },
+  { value: "greaterThan", label: "Greater than" },
+  { value: "lessThan", label: "Less than" },
+  { value: "between", label: "Between" },
+  { value: "isNull", label: "Is empty" },
+  { value: "isNotNull", label: "Is not empty" },
+];
+
+const COLUMN_DEFINITIONS: ColumnDefinition[] = [
+  { key: "overall", label: "Overall", kind: "number", align: "right" },
+  { key: "ticker", label: "Ticker", kind: "text", align: "left" },
+  { key: "delta", label: "Δ", kind: "number", align: "right" },
+  { key: "grade", label: "Grade", kind: "text", align: "right" },
+  { key: "price", label: "Price", kind: "number", align: "right" },
+  { key: "priceChange", label: "Δ%", kind: "number", align: "right" },
+  { key: "marketCap", label: "Mkt Cap", kind: "number", align: "right" },
+  { key: "coverage", label: "Coverage", kind: "number", align: "right" },
+  ...DIMENSION_KEYS.map(
+    (d) =>
+      ({
+        key: `dimension.${d}` as RankingColumnKey,
+        label: DIMENSION_META[d].label,
+        kind: "number" as const,
+        align: "right" as const,
+      }) as ColumnDefinition,
+  ),
+];
+
+function ColumnFilterPopover({
+  column,
+  filter,
+  onApply,
+}: {
+  column: ColumnDefinition;
+  filter?: RankingColumnFilter;
+  onApply: (filter: RankingColumnFilter | undefined) => void;
+}) {
+  const [operator, setOperator] = useState<RankingFilterOperator>(
+    filter?.operator ?? (column.kind === "text" ? "contains" : "greaterThan"),
+  );
+  const [value, setValue] = useState(filter?.value ?? "");
+  const [value2, setValue2] = useState(filter?.value2 ?? "");
+
+  const operators = column.kind === "text" ? TEXT_OPERATORS : NUMBER_OPERATORS;
+  const needsValue = !["isNull", "isNotNull"].includes(operator);
+  const needsValue2 = operator === "between";
+  const hasFilter = !!filter;
+
+  return (
+    <div className="space-y-2 w-56">
+      <div className="flex items-center justify-between">
+        <Label className="text-[10px] font-medium">{column.label} filter</Label>
+        {hasFilter && (
+          <span className="h-2 w-2 rounded-full bg-primary" title="Active filter" />
+        )}
+      </div>
+      <div>
+        <Label className="text-[9px] text-muted-foreground">Operator</Label>
+        <Select
+          value={operator}
+          onValueChange={(v) => setOperator(v as RankingFilterOperator)}
+        >
+          <SelectTrigger className="h-7 text-[10px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {operators.map((op) => (
+              <SelectItem key={op.value} value={op.value} className="text-[10px]">
+                {op.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {needsValue && (
+        <>
+          <Input
+            type={column.kind === "number" ? "number" : "text"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="h-7 text-[10px]"
+            placeholder={column.kind === "number" ? "Value" : "Text"}
+          />
+          {needsValue2 && (
+            <Input
+              type="number"
+              value={value2}
+              onChange={(e) => setValue2(e.target.value)}
+              className="h-7 text-[10px]"
+              placeholder="Max value"
+            />
+          )}
+        </>
+      )}
+      <div className="flex gap-1">
+        <Button
+          size="sm"
+          className="h-6 flex-1 text-[10px]"
+          onClick={() => {
+            if (needsValue && !value.trim()) return;
+            const newFilter: RankingColumnFilter = {
+              key: column.key,
+              operator,
+              ...(needsValue ? { value } : {}),
+              ...(needsValue2 ? { value2 } : {}),
+            };
+            onApply(newFilter);
+          }}
+        >
+          Apply
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 flex-1 text-[10px]"
+          onClick={() => onApply(undefined)}
+        >
+          Clear
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [search, setSearch] = useState("");
@@ -53,6 +221,16 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [pageSize] = useState(20);
   const [sort, setSort] = useState("overall");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const [columnFilters, setColumnFilters] = useState<
+    Partial<Record<string, RankingColumnFilter>>
+  >({});
+  const [openPopover, setOpenPopover] = useState<string | null>(null);
+
+  const activeColumnFilters = useMemo(
+    () =>
+      Object.values(columnFilters).filter(Boolean) as RankingColumnFilter[],
+    [columnFilters],
+  );
 
   // Fetch market status to populate sector filter
   const statusQ = useQuery({
@@ -69,7 +247,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   }, [statusQ.data]);
 
   const rankingsQ = useQuery({
-    queryKey: ["rankings", { search, sector, grade, page, pageSize, sort, order }],
+    queryKey: ["rankings", { search, sector, grade, page, pageSize, sort, order, columnFilters }],
     queryFn: async () => {
       const sp = new URLSearchParams({
         page: String(page),
@@ -80,6 +258,9 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
       if (search) sp.set("search", search);
       if (sector !== "All") sp.set("sector", sector);
       if (grade !== "All") sp.set("grade", grade);
+      if (activeColumnFilters.length > 0) {
+        sp.set("columnFilters", JSON.stringify(activeColumnFilters));
+      }
       const r = await fetch(`/api/rankings?${sp}`);
       return r.json();
     },
@@ -144,35 +325,83 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
         </Button>
       </div>
 
-      {/* Sort controls */}
-      <div className="flex items-center gap-1 text-[10px]">
+      {/* Sort & filter controls */}
+      <div className="flex flex-wrap items-center gap-1 text-[10px]">
         <Filter className="h-3 w-3 text-muted-foreground" />
         <span className="text-muted-foreground">sort:</span>
-        {[
-          ["overall", "Overall"],
-          ["priceChange", "Δ%"],
-          ["marketCap", "Mkt Cap"],
-          ["coverage", "Coverage"],
-          ["ticker", "Ticker"],
-        ].map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => {
-              if (sort === k) setOrder((o) => (o === "asc" ? "desc" : "asc"));
-              else {
-                setSort(k);
-                setOrder(k === "ticker" ? "asc" : "desc");
-              }
-            }}
-            className={`rounded px-1.5 py-0.5 ${
-              sort === k
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/70"
-            }`}
-          >
-            {label} {sort === k ? (order === "asc" ? "↑" : "↓") : ""}
-          </button>
+        {COLUMN_DEFINITIONS.map((col) => (
+          <div key={col.key} className="relative flex items-center gap-0.5">
+            <button
+              onClick={() => {
+                if (sort === col.key) setOrder((o) => (o === "asc" ? "desc" : "asc"));
+                else {
+                  setSort(col.key);
+                  setOrder(col.key === "ticker" ? "asc" : "desc");
+                }
+              }}
+              className={`rounded px-1.5 py-0.5 ${
+                sort === col.key
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/70"
+              }`}
+            >
+              {col.label} {sort === col.key ? (order === "asc" ? "↑" : "↓") : ""}
+            </button>
+            <Popover
+              open={openPopover === col.key}
+              onOpenChange={(open) => setOpenPopover(open ? col.key : null)}
+            >
+              <PopoverTrigger asChild>
+                <button
+                  className={`relative rounded p-0.5 ${
+                    columnFilters[col.key]
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-muted/70"
+                  }`}
+                  title={`Filter ${col.label}`}
+                >
+                  <SlidersHorizontal className="h-3 w-3" />
+                  {columnFilters[col.key] && (
+                    <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-primary" />
+                  )}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="p-0">
+                {openPopover === col.key && (
+                  <ColumnFilterPopover
+                    column={col}
+                    filter={columnFilters[col.key]}
+                    onApply={(filter) => {
+                      setColumnFilters((prev) => {
+                        if (!filter) {
+                          const next = { ...prev };
+                          delete next[col.key];
+                          return next;
+                        }
+                        return { ...prev, [col.key]: filter };
+                      });
+                      setPage(1);
+                      setOpenPopover(null);
+                    }}
+                  />
+                )}
+              </PopoverContent>
+            </Popover>
+          </div>
         ))}
+        {activeColumnFilters.length > 0 && (
+          <button
+            onClick={() => {
+              setColumnFilters({});
+              setPage(1);
+            }}
+            className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted/70"
+            title="Clear all column filters"
+          >
+            Clear all
+            <X className="h-3 w-3 inline ml-0.5" />
+          </button>
+        )}
         <span className="ml-auto text-muted-foreground">
           {total} symbols · page {page}/{totalPages}
         </span>

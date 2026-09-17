@@ -18,6 +18,9 @@ export const metadata: Metadata = {
   title: "BedaanWaves — NASDAQ ML Scoring Engine",
   description:
     "NASDAQ-exclusive, per-symbol ML-learned hierarchical scoring & ranking engine. 6 dimensions · 44 sub-dimensions · 135 aspects · 173 sub-aspects · 865+ indicators. TradingView-integrated UI.",
+  icons: {
+    icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
+  },
   keywords: [
     "BedaanWaves",
     "NASDAQ",

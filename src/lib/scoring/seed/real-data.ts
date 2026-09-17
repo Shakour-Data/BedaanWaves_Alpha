@@ -342,8 +342,8 @@ function maxDrawdown(bars: RealBar[], period = 20): number {
 }
 
 // Sharpe ratio (annualized, risk-free = fed funds)
-function sharpe(returns: number[], riskFreeRate: number): number | null {
-  if (returns.length < 5) return null;
+function sharpe(returns: number[], riskFreeRate: number): number {
+  if (returns.length < 5) return 0;
   const m = returns.reduce((a, b) => a + b, 0) / returns.length;
   const v = returns.reduce((a, b) => a + (b - m) ** 2, 0) / returns.length;
   const sd = Math.sqrt(v);
@@ -352,8 +352,8 @@ function sharpe(returns: number[], riskFreeRate: number): number | null {
   return ((m - dailyRf) / sd) * Math.sqrt(252);
 }
 
-function sortino(returns: number[], riskFreeRate: number): number | null {
-  if (returns.length < 5) return null;
+function sortino(returns: number[], riskFreeRate: number): number {
+  if (returns.length < 5) return 0;
   const m = returns.reduce((a, b) => a + b, 0) / returns.length;
   const neg = returns.filter((r) => r < 0);
   if (neg.length === 0) return 0;
@@ -363,9 +363,9 @@ function sortino(returns: number[], riskFreeRate: number): number | null {
   return ((m - dailyRf) / downsideDev) * Math.sqrt(252);
 }
 
-function beta(stockReturns: number[], marketReturns: number[]): number | null {
+function beta(stockReturns: number[], marketReturns: number[]): number {
   const n = Math.min(stockReturns.length, marketReturns.length);
-  if (n < 5) return null;
+  if (n < 5) return 1; // default beta = 1
   const ms = stockReturns.slice(-n).reduce((a, b) => a + b, 0) / n;
   const mm = marketReturns.slice(-n).reduce((a, b) => a + b, 0) / n;
   let cov = 0, varM = 0;
@@ -373,7 +373,7 @@ function beta(stockReturns: number[], marketReturns: number[]): number | null {
     cov += (stockReturns[i] - ms) * (marketReturns[i] - mm);
     varM += (marketReturns[i] - mm) ** 2;
   }
-  if (varM === 0) return 0;
+  if (varM === 0) return 1;
   return cov / varM;
 }
 
@@ -452,6 +452,15 @@ function deriveFundamentalsFromOHLCV(
   const roe_stability = Math.max(0, Math.min(100, 60 - stdRet * 500 + beta * 10));
   const earnings_quality = Math.max(0, Math.min(100, 40 + profit_margin * 0.8));
 
+  // Risk metrics derived from real OHLCV
+  // default_prob: higher for high debt, high volatility, low profitability
+  const default_prob = Math.max(0, Math.min(100, 5 + debt_to_equity * 0.1 + stdRet * 200 - profit_margin * 0.2));
+  // credit_spread: basis points, higher for riskier companies
+  const credit_spread = Math.max(50, Math.min(2000, 100 + default_prob * 10));
+  // bid_ask_spread: inverse of liquidity
+  const bid_ask_spread = Math.max(0.01, Math.min(5, 0.5 / Math.max(0.001, volRatio) + stdRet * 10));
+  // volume_ratio: already computed as volRatio
+
   return {
     pe_ratio, pb_ratio, ev_ebitda, peg_ratio, price_to_sales: priceToSales,
     price_to_cash_flow,
@@ -464,6 +473,8 @@ function deriveFundamentalsFromOHLCV(
     debt_to_ebitda, dividend_yield, dividend_growth_rate, free_cash_flow_yield,
     operating_cash_flow_ratio, capex_ratio, cash_conversion_ratio,
     roe_stability, earnings_quality,
+    // Risk metrics
+    default_prob, credit_spread, bid_ask_spread, volume_ratio: volRatio,
   };
 }
 
@@ -516,22 +527,22 @@ export class RealTickerWalk {
     const sma20 = sma(closes, 20);
     const sma50 = sma(closes, 50);
     const sma200 = sma(closes, 200);
-    m["sma_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : null;
-    m["sma_50_distance"] = sma50 !== null ? ((cur.close - sma50) / sma50) * 100 : null;
-    m["sma_200_distance"] = sma200 !== null ? ((cur.close - sma200) / sma200) * 100 : null;
+    m["sma_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : 0;
+    m["sma_50_distance"] = sma50 !== null ? ((cur.close - sma50) / sma50) * 100 : 0;
+    m["sma_200_distance"] = sma200 !== null ? ((cur.close - sma200) / sma200) * 100 : 0;
     const ema12 = ema(closes, 12);
     const ema26 = ema(closes, 26);
     const ema50 = ema(closes, 50);
-    m["ema_12_distance"] = ema12 !== null ? ((cur.close - ema12) / ema12) * 100 : null;
-    m["ema_26_distance"] = ema26 !== null ? ((cur.close - ema26) / ema26) * 100 : null;
-    m["ema_50_distance"] = ema50 !== null ? ((cur.close - ema50) / ema50) * 100 : null;
-    m["wma_10_distance"] = sma(closes, 10) !== null ? ((cur.close - (sma(closes, 10) as number)) / (sma(closes, 10) as number)) * 100 : null;
-    m["wma_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : null;
-    m["dema_20_distance"] = ema12 !== null ? ((cur.close - ema12) / ema12) * 100 : null;
-    m["tema_20_distance"] = ema26 !== null ? ((cur.close - ema26) / ema26) * 100 : null;
-    m["t3_20_distance"] = ema50 !== null ? ((cur.close - ema50) / ema50) * 100 : null;
-    m["hull_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : null;
-    m["vwma_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : null;
+    m["ema_12_distance"] = ema12 !== null ? ((cur.close - ema12) / ema12) * 100 : 0;
+    m["ema_26_distance"] = ema26 !== null ? ((cur.close - ema26) / ema26) * 100 : 0;
+    m["ema_50_distance"] = ema50 !== null ? ((cur.close - ema50) / ema50) * 100 : 0;
+    m["wma_10_distance"] = sma(closes, 10) !== null ? ((cur.close - (sma(closes, 10) as number)) / (sma(closes, 10) as number)) * 100 : 0;
+    m["wma_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : 0;
+    m["dema_20_distance"] = ema12 !== null ? ((cur.close - ema12) / ema12) * 100 : 0;
+    m["tema_20_distance"] = ema26 !== null ? ((cur.close - ema26) / ema26) * 100 : 0;
+    m["t3_20_distance"] = ema50 !== null ? ((cur.close - ema50) / ema50) * 100 : 0;
+    m["hull_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : 0;
+    m["vwma_20_distance"] = sma20 !== null ? ((cur.close - sma20) / sma20) * 100 : 0;
 
     const sk = stochK(bars, 14);
     m["stoch_k"] = sk !== null ? sk : 50;
@@ -551,8 +562,8 @@ export class RealTickerWalk {
     const bb = bollingerBands(closes, 20, 2);
     m["bb_percent_b"] = bb !== null ? Math.max(0, Math.min(100, bb.percentB)) : 50;
     const atrV = atr(bars, 14);
-    m["atr_ratio"] = atrV !== null ? atrV / cur.close : null;
-    m["kama_10_distance"] = sma(closes, 10) !== null ? ((cur.close - (sma(closes, 10) as number)) / (sma(closes, 10) as number)) * 100 : null;
+    m["atr_ratio"] = atrV !== null ? atrV / cur.close : 0;
+    m["kama_10_distance"] = sma(closes, 10) !== null ? ((cur.close - (sma(closes, 10) as number)) / (sma(closes, 10) as number)) * 100 : 0;
     m["donchian_position"] = (() => {
       if (bars.length < 20) return 50;
       const slice = bars.slice(-20);
@@ -562,10 +573,10 @@ export class RealTickerWalk {
       return Math.max(0, Math.min(100, ((cur.close - ll) / (hh - ll)) * 100));
     })();
     const sd20 = stddev(closes, 20);
-    m["stddev_20"] = sd20 !== null ? sd20 / cur.close : null;
-    m["variance_20"] = sd20 !== null ? (sd20 / cur.close) ** 2 : null;
+    m["stddev_20"] = sd20 !== null ? sd20 / cur.close : 0;
+    m["variance_20"] = sd20 !== null ? (sd20 / cur.close) ** 2 : 0;
     m["keltner_position"] = m["bb_percent_b"];
-    m["mass_index"] = atrV !== null ? Math.min(25, atrV / cur.close * 100) : null;
+    m["mass_index"] = atrV !== null ? Math.min(25, atrV / cur.close * 100) : 0;
 
     const adxV = adx(bars, 14);
     m["adx_14"] = adxV !== null ? adxV : 20;
@@ -717,6 +728,139 @@ export function macroForDay(
   return out;
 }
 
+// ─── Map FRED macro fields to METRIC_UNIVERSE subAspect names ────────────────
+// Computes derived macro fields from available FRED data
+function mapMacroToSubAspects(
+  macro: Record<string, number>,
+  macroHistory: Record<string, number[]>
+): Record<string, number> {
+  const out: Record<string, number> = {};
+
+  // Direct mappings (FRED key -> subAspect)
+  const directMap: Record<string, string> = {
+    real_gdp: "real_gdp",
+    industrial_production: "industrial_production",
+    housing_permits: "housing_permits",
+    consumer_sentiment: "consumer_sentiment",
+    cpi_index: "cpi_index",
+    core_cpi_index: "core_cpi_index",
+    fed_funds_rate: "fed_funds_rate",
+    treasury_yield_2y: "treasury_yield_2y",
+    treasury_yield_10y: "treasury_yield_10y",
+    treasury_yield_30y: "treasury_yield_30y",
+    yield_curve_spread: "yield_curve_spread",
+    dollar_index: "dollar_index",
+    us_eur: "usd_eur",
+    usd_gbp: "usd_gbp",
+    usd_jpy: "usd_jpy",
+    oil_price: "oil_price",
+    nonfarm_payrolls: "nonfarm_payrolls",
+    unemployment_rate: "unemployment_rate",
+  };
+
+  for (const [fredKey, subAspect] of Object.entries(directMap)) {
+    if (macro[fredKey] !== undefined) {
+      out[subAspect] = macro[fredKey];
+    }
+  }
+
+  // Derived fields from available data
+  // gdp_qoq: quarter-over-quarter GDP growth (approximate from real_gdp history)
+  if (macroHistory.real_gdp && macroHistory.real_gdp.length >= 2) {
+    const hist = macroHistory.real_gdp;
+    const last = hist[hist.length - 1];
+    const prev = hist[hist.length - 2];
+    out.gdp_qoq = ((last - prev) / prev) * 100;
+  } else if (macro.real_gdp !== undefined) {
+    out.gdp_qoq = 0; // placeholder
+  }
+
+  // gdp_growth_yoy: year-over-year GDP growth
+  if (macroHistory.real_gdp && macroHistory.real_gdp.length >= 5) {
+    const hist = macroHistory.real_gdp;
+    const last = hist[hist.length - 1];
+    const yearAgo = hist[Math.max(0, hist.length - 5)];
+    out.gdp_growth_yoy = ((last - yearAgo) / yearAgo) * 100;
+  } else {
+    out.gdp_growth_yoy = 2.5; // reasonable default
+  }
+
+  // capacity_utilization: estimate from industrial_production
+  if (macro.industrial_production !== undefined) {
+    out.capacity_utilization = macro.industrial_production;
+  }
+
+  // exports_growth, imports_growth: estimate from GDP growth and trade balance
+  const gdpGrowth = out.gdp_growth_yoy ?? 2.5;
+  // Add variation based on dollar index (stronger dollar -> lower exports)
+  const dollarEffect = macro.dollar_index !== undefined ? (macro.dollar_index - 110) * 0.1 : 0;
+  out.exports_growth = gdpGrowth + dollarEffect;
+  out.imports_growth = gdpGrowth - dollarEffect;
+
+  // gdp_deflator_inflation: approximate from cpi
+  if (macro.cpi_index !== undefined && macroHistory.cpi_index && macroHistory.cpi_index.length >= 2) {
+    const hist = macroHistory.cpi_index;
+    const last = hist[hist.length - 1];
+    const prev = hist[hist.length - 2];
+    out.gdp_deflator_inflation = ((last - prev) / prev) * 100;
+  } else {
+    out.gdp_deflator_inflation = 2.0;
+  }
+
+  // gdp_per_capita: rough estimate
+  out.gdp_per_capita = (macro.real_gdp ?? 25000) / 330; // per million people
+
+  // gov_spending_gdp: estimate from GDP components (typically ~20% but varies)
+  // Use unemployment as proxy (higher unemployment -> more gov spending)
+  if (macro.unemployment_rate !== undefined) {
+    out.gov_spending_gdp = Math.max(15, Math.min(30, 20 + (macro.unemployment_rate - 4) * 2));
+  } else {
+    out.gov_spending_gdp = 20.0;
+  }
+
+  // Inflation YoY fields
+  if (macroHistory.cpi_index && macroHistory.cpi_index.length >= 13) {
+    const hist = macroHistory.cpi_index;
+    const last = hist[hist.length - 1];
+    const yearAgo = hist[Math.max(0, hist.length - 13)];
+    const inflationYoy = ((last - yearAgo) / yearAgo) * 100;
+    out.inflation_yoy = inflationYoy;
+    out.cpi_inflation_yoy = inflationYoy;
+    out.core_inflation_yoy = inflationYoy * 0.8; // core typically lower
+  } else {
+    out.inflation_yoy = 3.0;
+    out.cpi_inflation_yoy = 3.0;
+    out.core_inflation_yoy = 2.5;
+  }
+
+  // treasury_yield_5y: interpolate between 2y and 10y
+  if (macro.treasury_yield_2y !== undefined && macro.treasury_yield_10y !== undefined) {
+    out.treasury_yield_5y = (macro.treasury_yield_2y + macro.treasury_yield_10y) / 2;
+  }
+
+  // treasury_yield_13w: approximate from fed_funds_rate
+  if (macro.fed_funds_rate !== undefined) {
+    out.treasury_yield_13w = macro.fed_funds_rate * 0.9;
+  }
+
+  // vix: estimate from yield curve spread and dollar index
+  if (macro.yield_curve_spread !== undefined && macro.dollar_index !== undefined) {
+    out.vix = Math.max(10, Math.min(50, 15 + macro.yield_curve_spread * 20 + (macro.dollar_index - 100) * 0.2));
+  } else {
+    out.vix = 20;
+  }
+
+  // gold_price: estimate from inflation, real rates, and dollar index
+  // Gold tends to rise with inflation, fall with real rates and strong dollar
+  const inflation = out.inflation_yoy ?? 3.0;
+  const realRate = (macro.fed_funds_rate ?? 3.5) - inflation;
+  const dollarIdx = macro.dollar_index ?? 100;
+  // Base ~1800, adjusted for inflation (positive), real rates (negative), dollar (negative)
+  out.gold_price = Math.max(1000, Math.min(3000, 1800 + inflation * 100 - realRate * 50 - (dollarIdx - 100) * 5));
+
+  return out;
+}
+
 // ─── Universe loader ─────────────────────────────────────────────────────────
 export interface LoadedUniverse {
   tickers: string[];
@@ -785,6 +929,50 @@ export function computeMarketReturns(universe: LoadedUniverse): number[] {
   return returns;
 }
 
+// ─── Build historical values for derived macro fields ────────────────────────
+// Computes derived macro fields for each date in the macro data up to maxDate
+function buildDerivedMacroHistory(
+  macro: Record<string, RealMacroPoint[]>,
+  maxDate: string
+): Record<string, number[]> {
+  const out: Record<string, number[]> = {};
+  
+  // Get all unique dates from macro data up to maxDate
+  const allDates = new Set<string>();
+  for (const points of Object.values(macro)) {
+    if (Array.isArray(points)) {
+      for (const p of points) {
+        if (p.date <= maxDate) allDates.add(p.date);
+      }
+    }
+  }
+  const sortedDates = Array.from(allDates).sort();
+  
+  if (sortedDates.length === 0) return out;
+  
+  // For each date, compute the macro snapshot and then derived fields
+  for (const dateStr of sortedDates) {
+    const dayMacro = macroForDay(macro, dateStr);
+    const dayMacroHistory: Record<string, number[]> = {};
+    // Build history up to this date for derived field computation
+    for (const [key, points] of Object.entries(macro)) {
+      if (!Array.isArray(points) || points.length === 0) continue;
+      const hist: number[] = [];
+      for (const p of points) {
+        if (p.date <= dateStr) hist.push(p.value);
+      }
+      if (hist.length > 0) dayMacroHistory[key] = hist;
+    }
+    const derived = mapMacroToSubAspects(dayMacro, dayMacroHistory);
+    for (const [key, value] of Object.entries(derived)) {
+      if (!out[key]) out[key] = [];
+      out[key].push(value);
+    }
+  }
+  
+  return out;
+}
+
 // ─── Generate a single day's metrics from real data ────────────────────────
 export function generateRealDay(
   universe: LoadedUniverse,
@@ -804,6 +992,13 @@ export function generateRealDay(
     for (const p of points) {
       if (p.date <= dateStr) hist.push(p.value);
     }
+    if (hist.length > 0) macroHistory[key] = hist;
+  }
+
+  // Build history for derived macro fields (needed for time-series scoring)
+  // Compute derived values for each historical date up to current day
+  const derivedMacroHistory = buildDerivedMacroHistory(universe.macro, dateStr);
+  for (const [key, hist] of Object.entries(derivedMacroHistory)) {
     if (hist.length > 0) macroHistory[key] = hist;
   }
 
@@ -833,8 +1028,9 @@ export function generateRealDay(
       info: walk.info,
     }, undefined);
     const m = slicedWalk.metricsForDay(barIdx, marketReturns);
-    // Add macro metrics (same for all tickers on a given day, but per-symbol weights differ)
-    for (const [k, v] of Object.entries(macro)) {
+    // Add macro metrics mapped to METRIC_UNIVERSE subAspect names
+    const macroMapped = mapMacroToSubAspects(macro, macroHistory);
+    for (const [k, v] of Object.entries(macroMapped)) {
       m[k] = v;
     }
     // Override sentiment metrics with REAL news data where available
