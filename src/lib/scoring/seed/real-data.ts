@@ -79,12 +79,36 @@ const MACRO_FILE = join(process.cwd(), "src/lib/scoring/seed/real-macro-data.jso
 function loadRealData(): {
   per_ticker: Record<string, RealTickerData>;
   macro: Record<string, RealMacroPoint[]>;
+  news: Array<{
+    headline: string;
+    source: string;
+    publishedAt: string;
+    sentiment: string;
+    severity: string;
+    tickers: string[];
+  }>;
 } {
   const data = JSON.parse(readFileSync(DATA_FILE, "utf-8")) as RealDataFile;
   const macroData = JSON.parse(readFileSync(MACRO_FILE, "utf-8")) as RealMacroFile;
+  let news: Array<{
+    headline: string;
+    source: string;
+    publishedAt: string;
+    sentiment: string;
+    severity: string;
+    tickers: string[];
+  }> = [];
+  try {
+    const newsFile = join(process.cwd(), "src/lib/scoring/seed/real-news-data.json");
+    const newsData = JSON.parse(readFileSync(newsFile, "utf-8"));
+    news = newsData.news ?? [];
+  } catch {
+    // news file may not exist yet
+  }
   return {
     per_ticker: data.per_ticker,
     macro: { ...data.macro, ...macroData.macro },
+    news,
   };
 }
 
@@ -563,10 +587,18 @@ export interface LoadedUniverse {
   walks: Map<string, RealTickerWalk>;
   tradingDays: string[]; // YYYY-MM-DD
   macro: Record<string, RealMacroPoint[]>;
+  news: Array<{
+    headline: string;
+    source: string;
+    publishedAt: string;
+    sentiment: string;
+    severity: string;
+    tickers: string[];
+  }>;
 }
 
 export function loadRealUniverse(): LoadedUniverse | null {
-  let data: { per_ticker: Record<string, RealTickerData>; macro: Record<string, RealMacroPoint[]> };
+  let data: ReturnType<typeof loadRealData>;
   try {
     data = loadRealData();
   } catch {
@@ -601,6 +633,7 @@ export function loadRealUniverse(): LoadedUniverse | null {
     walks,
     tradingDays: scoringDays,
     macro: data.macro,
+    news: data.news,
   };
 }
 
@@ -632,6 +665,9 @@ export function generateRealDay(
   const assetMetrics: Record<string, Record<string, number | null>> = {};
   const prices: Record<string, { price: number; priceChange: number; volume: number }> = {};
 
+  // Build news sentiment map for this day (real news → per-ticker sentiment)
+  const newsMap = computeNewsSentimentForDay(universe.news, dateStr);
+
   for (const ticker of universe.tickers) {
     const walk = universe.walks.get(ticker);
     if (!walk) continue;
@@ -647,8 +683,6 @@ export function generateRealDay(
       volume: bar.volume,
     };
     // Compute metrics using real candle history up to this date
-    // We need to pass the full history slice; metricsForDay expects idx into walk.ohlcv
-    // But walk.ohlcv starts from the beginning — we need the slice that ends at this date
     const slicedWalk = new RealTickerWalk(ticker, {
       ohlcv: walk.ohlcv.slice(0, barIdx + 1),
       info: walk.info,
@@ -658,10 +692,46 @@ export function generateRealDay(
     for (const [k, v] of Object.entries(macro)) {
       m[k] = v;
     }
+    // Override sentiment metrics with REAL news data where available
+    const newsData = newsMap[ticker];
+    if (newsData) {
+      m["news_sentiment_avg"] = newsData.avgSentiment;
+      m["news_volume"] = newsData.articleCount;
+      m["social_sentiment"] = newsData.avgSentiment; // use real news sentiment
+    }
     assetMetrics[ticker] = m;
   }
 
   return { date: dateStr, prices, macro, assetMetrics };
+}
+
+// Compute per-ticker news sentiment for a given day from REAL news articles
+function computeNewsSentimentForDay(
+  news: LoadedUniverse["news"],
+  dateStr: string
+): Record<string, { avgSentiment: number; articleCount: number }> {
+  const out: Record<string, { avgSentiment: number; articleCount: number }> = {};
+  const dayStart = new Date(dateStr + "T00:00:00Z").getTime();
+  const dayEnd = dayStart + 86400000;
+  for (const n of news) {
+    const pubDate = new Date(n.publishedAt).getTime();
+    // Include articles from the last 3 days (news effect decays)
+    if (pubDate > dayEnd || pubDate < dayStart - 3 * 86400000) continue;
+    const sentimentScore = n.sentiment === "bullish" ? 70 : n.sentiment === "bearish" ? 30 : 50;
+    for (const ticker of n.tickers) {
+      if (!out[ticker]) out[ticker] = { avgSentiment: 50, articleCount: 0 };
+      // Weighted average: more articles = more confidence in sentiment
+      const prev = out[ticker];
+      const newCount = prev.articleCount + 1;
+      prev.avgSentiment = (prev.avgSentiment * prev.articleCount + sentimentScore) / newCount;
+      prev.articleCount = newCount;
+    }
+  }
+  // Scale news_volume: article count → 0-100 score
+  for (const ticker of Object.keys(out)) {
+    out[ticker].articleCount = Math.min(100, out[ticker].articleCount * 20);
+  }
+  return out;
 }
 
 // Re-export for compatibility

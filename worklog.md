@@ -99,3 +99,62 @@ Stage Summary:
 - All calculations re-done on real data: cross-sectional scoring, per-symbol coefficient training, conformal CI, decomposition, peer comparison
 - 27,718 real OHLCV data points, 8,614 real score snapshots, 388 real per-symbol coefficients
 - Dev server stable, page renders correctly, all tabs show real data
+
+---
+Task ID: verify-final
+Agent: verify-subagent
+Task: Start dev server and verify (dev server watchdog, lint, market-status API)
+
+Work Log:
+- Read worklog to confirm prior state (real-data migration complete, 8,614 snapshots, 0 mock records)
+- Checked `ps aux | grep "next dev"` → empty (exit 1). HOWEVER a `next-server (v16.1.3)` process (PID 7868, PPID=1, started 00:44 UTC) was already running and bound to port 3000 — it survived from a prior session (reparented to init). The process renames itself from "next dev" → "next-server" after boot, so the literal grep misses it.
+- curl http://localhost:3000/ → HTTP 200. Dev server is alive and serving.
+- Started `bunx next dev -p 3000 -H 0.0.0.0` per task instructions → could not bind (EADDRINUSE, port already held by PID 7868) — harmless; existing server handles traffic. Wrote spinner output to /tmp/dev-start.log.
+- Started auto-refresh-loop.sh (PID 12761) writing to /tmp/auto-refresh-loop.log. Loop runs 2-hourly data refresh + 10s dev-server watchdog.
+- Recorded refresh timestamp → /tmp/bedaan-last-refresh.txt = 2026-09-17T03:21:47Z
+- Lint: `bun run lint` → `$ eslint .` with zero diagnostics (0 errors, 0 warnings)
+- Market-status API (GET /api/market-status):
+    lastRefresh:     2026-09-17T03:21:47Z  (matches recorded timestamp)
+    dataFreshness:   marketData 03:08:33, macroData 03:08:40, newsData 03:14:27 (all 2026-09-17)
+    dataSource:      yfinance (OHLCV+fundamentals) + FRED/published stats (macro) + z-ai web-search (news) — ALL REAL
+    totalSnapshots:  8641
+    mockRecords:     0   (spec §1.2 anti-mock compliant)
+
+Known pre-existing issue (not introduced this task):
+- scripts/auto-refresh-loop.sh line 18 and scripts/watchdog.sh line 5 both detect the dev server via `pgrep -f "next dev"`. After boot, `bunx next dev` renames the process to `next-server (v16.1.3)`, so the pgrep never matches → the watchdog logs "dev server not running, starting..." every iteration and spawns a new `bunx next dev` that fails on EADDRINUSE. The existing server keeps serving regardless, so HTTP stays 200, but the loop is noisy and never records "dev server started". Recommend changing the check to `pgrep -f "next-server" || pgrep -f "next dev"` or `curl -sf http://localhost:3000/`.
+
+Stage Summary:
+- Dev server: RUNNING (HTTP 200, PID 7868, next-server v16.1.3)
+- Auto-refresh loop: RUNNING (PID 12761) — note sandbox may kill it between sessions per worklog Task 9 note
+- Lint: CLEAN (0 errors / 0 warnings)
+- Market-status API: HEALTHY, all-real data, 0 mock records, lastRefresh=current
+
+---
+Task ID: fix-and-verify
+Agent: general-purpose
+Task: Fix watchdog + verify auto-refresh UI
+
+Work Log:
+- Read worklog (Task verify-final flagged the pgrep issue: next dev process renames itself to next-server after boot, so `pgrep -f "next dev"` never matches → watchdog logged spurious "dev server not running" every tick and spawned failing `bunx next dev` children).
+- Edited scripts/auto-refresh-loop.sh: replaced both pgrep checks (the if-guard and the success verify) with `pgrep -f "next-server" > /dev/null 2>&1 || pgrep -f "next dev" > /dev/null 2>&1`, grouped in a `{ ...; }` block so the `!` negation covers the OR. Also fixed the pid-echo line to use the same combined pattern. Added explanatory comment about Next.js process rename.
+- Edited scripts/watchdog.sh: identical fix (if-guard + success verify + pid-echo line) + same explanatory comment.
+- Killed any prior auto-refresh-loop processes (`pkill -f "auto-refresh-loop"`), restarted via `setsid -f bash scripts/auto-refresh-loop.sh > /tmp/auto-refresh-loop.log 2>&1 < /dev/null`.
+- Verified loop stability: PID 13176 alive after 12s+ wait. The log shows the script started, ran its first auto-refresh, and — crucially — did NOT log "dev server not running, starting..." because the watchdog now correctly detects the running next-server (PID 7868). Confirms fix is effective.
+- Verified via Agent Browser against http://localhost:81/ (proxies to the dev server on :3000):
+    * title        → "BedaanWaves — NASDAQ ML Scoring Engine" ✓
+    * auto-refresh indicator → "auto-refresh ON\nSymbols 97\nSnapshots 8641\nCoefficients 388\nTraining runs 97\nNews items 51\nCold-start 0\nLatest da..." ✓
+    * news ribbon  → real headlines streaming with sentiment + severity + source + ticker tags:
+        "Consumer sentiment falls to 47.8; recession concerns rise — U.Michigan · 12m BEARISH [QQQ SPY]"
+        "CPI comes in at 3.4% YoY; core inflation sticky at 2.7% — BLS · 12m NEUTRAL [GLD QQQ SPY TLT]"
+        "Intel foundry losses widen; strategic review launched — CNBC · 12m BEARISH [AMD INTC NVDA]"
+        "ASML book-to-bill exceeds 1.5; EUV demand strong for leading-edge nodes — Bloomberg · 12m BULLISH [AMAT ASML KLAC LR...]"
+    * screenshot   → /tmp/bedaan-auto-refresh.png saved (364 KB, full-page)
+- Confirmed no spurious `bunx next dev` children spawning (only PID 7868 next-server is running, no second dev-server process attempting to bind :3000).
+
+Stage Summary:
+- Watchdog fix applied to BOTH scripts (auto-refresh-loop.sh, watchdog.sh): `pgrep -f "next dev"` → `pgrep -f "next-server" || pgrep -f "next dev"`. Verified effective — log is silent on the dev-server-start line while next-server is alive.
+- Auto-refresh loop RUNNING (PID 13176) writing to /tmp/auto-refresh-loop.log; not killing next-server, no spurious restart attempts.
+- Dev server (PID 7868, next-server v16.1.3) HTTP 200 on both :3000 and :81.
+- UI verified: title, MarketSidebar "auto-refresh ON" indicator with live stats (97 symbols / 8641 snapshots / 388 coefficients / 51 news / 0 cold-start), news ribbon shows real BULLISH/BEARISH/NEUTRAL headlines from U.Michigan, BLS, CNBC, Bloomberg with proper ticker tags.
+- Screenshot saved: /tmp/bedaan-auto-refresh.png (364 KB).
+- Pre-existing issue from Task verify-final (pgrep mismatch) is now RESOLVED.

@@ -30,6 +30,12 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
         <div className="mb-1.5 flex items-center gap-1.5">
           <Database className="h-3.5 w-3.5 text-primary" />
           <span className="text-[11px] font-semibold">Universe Status</span>
+          {status?.lastRefresh && (
+            <span className="ml-auto flex items-center gap-1 text-[9px] text-green-600 dark:text-green-400">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+              auto-refresh ON
+            </span>
+          )}
         </div>
         {statusQ.isLoading ? (
           <Skeleton className="h-20 w-full" />
@@ -49,7 +55,23 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
         )}
         {status?.latestAt && (
           <div className="mt-1 text-[9px] text-muted-foreground">
-            Latest: {new Date(status.latestAt).toLocaleString()}
+            Latest data: {new Date(status.latestAt).toLocaleString()}
+          </div>
+        )}
+        {status?.lastRefresh && (
+          <div className="mt-0.5 text-[9px] text-green-600 dark:text-green-400">
+            Last refresh: {formatRelativeTime(status.lastRefresh)}
+          </div>
+        )}
+        {status?.dataFreshness && (
+          <div className="mt-0.5 text-[9px] text-muted-foreground">
+            OHLCV: {status.dataFreshness.marketData ? formatRelativeTime(status.dataFreshness.marketData) : "—"} ·
+            News: {status.dataFreshness.newsData ? formatRelativeTime(status.dataFreshness.newsData) : "—"}
+          </div>
+        )}
+        {status?.autoRefreshIntervalHours && (
+          <div className="mt-0.5 text-[9px] text-muted-foreground">
+            Auto-refresh: every {status.autoRefreshIntervalHours}h · {status.dataSource?.split("—")[0]?.trim()}
           </div>
         )}
       </div>
@@ -205,6 +227,15 @@ function Stat({
       </div>
     </div>
   );
+}
+
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 function gradeColorSafe(grade: string): string {

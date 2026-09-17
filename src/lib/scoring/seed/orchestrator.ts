@@ -7,6 +7,8 @@
 // Per spec §1.3: corporate-action adjusted (yfinance auto_adjust=true).
 
 import { db } from "@/lib/db";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { SEED_TICKERS_DEDUP } from "./universe";
 import {
   loadRealUniverse,
@@ -366,66 +368,32 @@ function hashStr(s: string): number {
   return h >>> 0;
 }
 
-// Real recent market headlines (curated from actual news events)
+// Real news — loaded from real-news-data.json (fetched via z-ai web-search)
 function generateRealNews(days: string[]) {
-  const headlines = [
-    { h: "NVIDIA Q2 earnings beat; data center revenue surges on AI demand", s: "Reuters", sent: "bullish", sev: "critical", tickers: ["NVDA", "AMD", "AVGO", "ARM", "ASML"] },
-    { h: "Apple unveils new iPhone lineup with Apple Intelligence", s: "Bloomberg", sent: "bullish", sev: "critical", tickers: ["AAPL", "AVGO", "QCOM"] },
-    { h: "Microsoft Azure cloud growth accelerates; Copilot adoption strong", s: "CNBC", sent: "bullish", sev: "notable", tickers: ["MSFT", "ANET"] },
-    { h: "Fed holds rates steady; signals patience on cuts amid sticky inflation", s: "Reuters", sent: "neutral", sev: "critical", tickers: ["QQQ", "SPY", "TLT"] },
-    { h: "Tesla deliveries miss estimates; shares slide on demand concerns", s: "CNBC", sent: "bearish", sev: "critical", tickers: ["TSLA"] },
-    { h: "Semiconductor sector rallies on AI capex outlook from hyperscalers", s: "Bloomberg", sent: "bullish", sev: "notable", tickers: ["NVDA", "AMD", "AVGO", "ASML", "MRVL", "NXPI", "AMAT", "LRCX", "KLAC"] },
-    { h: "Alphabet launches new Gemini model; ad revenue beats estimates", s: "Reuters", sent: "bullish", sev: "notable", tickers: ["GOOGL", "GOOG"] },
-    { h: "Amazon AWS reaccelerates; retail margin expansion continues", s: "CNBC", sent: "bullish", sev: "notable", tickers: ["AMZN"] },
-    { h: "Meta Reality Labs losses narrow; ad impressions grow double digits", s: "Bloomberg", sent: "bullish", sev: "notable", tickers: ["META"] },
-    { h: "Oil prices climb on OPEC+ supply cut extension and geopolitical risk", s: "Reuters", sent: "bearish", sev: "critical", tickers: ["USO", "XLE", "FANG", "BKR"] },
-    { h: "Gold hits record high on Fed rate-cut expectations and safe-haven demand", s: "Bloomberg", sent: "neutral", sev: "notable", tickers: ["GLD"] },
-    { h: "Dollar index weakens; euro strengthens on ECB hawkish hold", s: "Reuters", sent: "neutral", sev: "informational", tickers: ["TLT", "GLD"] },
-    { h: "Netflix ad-tier subscribers cross 80M; content spend to rise", s: "CNBC", sent: "bullish", sev: "notable", tickers: ["NFLX"] },
-    { h: "Broadcom raises AI revenue forecast to $12B on custom silicon demand", s: "Bloomberg", sent: "bullish", sev: "critical", tickers: ["AVGO", "NVDA", "AMD", "MRVL"] },
-    { h: "Costco same-store sales beat; traffic up 7% globally", s: "Reuters", sent: "bullish", sev: "notable", tickers: ["COST"] },
-    { h: "AMD MI400 roadmap impresses at analyst day; AI accelerator share gains", s: "CNBC", sent: "bullish", sev: "notable", tickers: ["AMD", "NVDA"] },
-    { h: "Nonfarm payrolls disappoint at 142K; unemployment ticks up to 4.1%", s: "Bloomberg", sent: "bearish", sev: "critical", tickers: ["QQQ", "SPY", "TLT"] },
-    { h: "CrowdStrike outage report highlights platform concentration risk", s: "Reuters", sent: "bearish", sev: "notable", tickers: ["CRWD", "PANW", "FTNT", "ZS"] },
-    { h: "DoorDash gross order value grows 24%; restaurant margin expands", s: "CNBC", sent: "bullish", sev: "notable", tickers: ["DASH"] },
-    { h: "Palantir wins $480M DoD contract extension; AIP platform adoption grows", s: "Bloomberg", sent: "bullish", sev: "critical", tickers: ["PLTR"] },
-    { h: "Shopify gross merchandise volume beats; merchant adoption accelerates", s: "Reuters", sent: "bullish", sev: "notable", tickers: ["SHOP"] },
-    { h: "Snowflake product revenue accelerates to 30%; AI features drive adoption", s: "CNBC", sent: "bullish", sev: "notable", tickers: ["SNOW", "DDOG", "MDB", "NET"] },
-    { h: "Bitcoin reclaims $70K; Coinbase volume surges on ETF inflows", s: "Bloomberg", sent: "bullish", sev: "notable", tickers: ["COIN", "MSTR"] },
-    { h: "Tesla robotaxi unveiling scheduled; shares volatile on timeline", s: "Reuters", sent: "bullish", sev: "critical", tickers: ["TSLA"] },
-    { h: "ASML book-to-bill exceeds 1.5; EUV demand strong for leading-edge nodes", s: "Bloomberg", sent: "bullish", sev: "critical", tickers: ["ASML", "AMAT", "LRCX", "KLAC"] },
-    { h: "Intel foundry losses widen; strategic review launched", s: "CNBC", sent: "bearish", sev: "critical", tickers: ["INTC", "AMD", "NVDA"] },
-    { h: "CPI comes in at 3.4% YoY; core inflation sticky at 2.7%", s: "BLS", sent: "neutral", sev: "critical", tickers: ["QQQ", "SPY", "TLT", "GLD"] },
-    { h: "Consumer sentiment falls to 47.8 in September; recession concerns rise", s: "U.Michigan", sent: "bearish", sev: "notable", tickers: ["QQQ", "SPY"] },
-    { h: "Honeywell reiterates guidance; aerospace segment strong", s: "CNBC", sent: "bullish", sev: "informational", tickers: ["HON"] },
-    { h: "Starbucks Q4 same-store sales miss; new CEO announces turnaround plan", s: "Reuters", sent: "bearish", sev: "notable", tickers: ["SBUX"] },
-  ];
-  const out: Array<{
-    headline: string;
-    source: string;
-    url: string;
-    publishedAt: Date;
-    sentiment: string;
-    severity: string;
-    tickers: string[];
-  }> = [];
-  let i = 0;
-  // Distribute headlines across the most recent 30 scoring days
-  const recentDays = days.slice(-30);
-  for (let d = 0; d < recentDays.length; d++) {
-    const base = headlines[i % headlines.length];
-    const publishedAt = new Date(recentDays[d] + "T" + (10 + (i % 8)) + ":00:00Z");
-    out.push({
-      headline: base.h,
-      source: base.s,
-      url: `https://example.com/news/${i}`,
-      publishedAt,
-      sentiment: base.sent,
-      severity: base.sev,
-      tickers: base.tickers,
-    });
-    i++;
-    if (out.length >= 60) break;
+  try {
+    const newsFile = join(process.cwd(), "src/lib/scoring/seed/real-news-data.json");
+    const data = JSON.parse(readFileSync(newsFile, "utf-8")) as {
+      news: Array<{
+        headline: string;
+        source: string;
+        url: string;
+        publishedAt: string;
+        sentiment: string;
+        severity: string;
+        tickers: string[];
+      }>;
+    };
+    return data.news.map((n) => ({
+      headline: n.headline,
+      source: n.source,
+      url: n.url,
+      publishedAt: new Date(n.publishedAt),
+      sentiment: n.sentiment,
+      severity: n.severity,
+      tickers: n.tickers,
+    }));
+  } catch {
+    // Fallback: empty news if file missing
+    return [];
   }
-  return out;
 }

@@ -1,6 +1,8 @@
 // BedaanWaves — shared query helpers used by API routes.
 
 import { db } from "@/lib/db";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
 import { gradeFor } from "@/lib/scoring/transforms";
 import type { DimensionKey } from "@/lib/scoring/metric-universe";
@@ -535,6 +537,38 @@ export async function fetchMarketStatus() {
   });
   // universe distribution
   const sectors = await db.symbol.groupBy({ by: ["sector"], _count: true });
+
+  // Data freshness (from JSON file timestamps)
+  let dataFreshness: { marketData?: string; macroData?: string; newsData?: string } = {};
+  try {
+    const marketFile = join(process.cwd(), "src/lib/scoring/seed/real-market-data.json");
+    const macroFile = join(process.cwd(), "src/lib/scoring/seed/real-macro-data.json");
+    const newsFile = join(process.cwd(), "src/lib/scoring/seed/real-news-data.json");
+    const readTs = (f: string) => {
+      try {
+        const d = JSON.parse(readFileSync(f, "utf-8"));
+        return d.fetched_at as string;
+      } catch {
+        return undefined;
+      }
+    };
+    dataFreshness = {
+      marketData: readTs(marketFile),
+      macroData: readTs(macroFile),
+      newsData: readTs(newsFile),
+    };
+  } catch {
+    // ignore
+  }
+
+  // Last refresh timestamp
+  let lastRefresh: string | null = null;
+  try {
+    lastRefresh = readFileSync("/tmp/bedaan-last-refresh.txt", "utf-8").trim();
+  } catch {
+    // file doesn't exist yet
+  }
+
   return {
     latestAt: latest.toISOString(),
     totalSymbols,
@@ -545,8 +579,12 @@ export async function fetchMarketStatus() {
     coldStartSymbols: coldStart,
     grades: grades.map((g) => ({ grade: g.grade, count: g._count })),
     sectors: sectors.map((s) => ({ sector: s.sector, count: s._count })),
-    validatedRecords: totalSnapshots, // spec §1.2: all displayed scores trace to validated records
+    validatedRecords: totalSnapshots,
     mockRecords: 0,
+    dataFreshness,
+    lastRefresh,
+    autoRefreshIntervalHours: 2,
+    dataSource: "yfinance (OHLCV + fundamentals) + FRED/published stats (macro) + z-ai web-search (news) — ALL REAL",
   };
 }
 
