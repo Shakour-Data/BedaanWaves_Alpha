@@ -80,17 +80,23 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
         symbol: tvSymbol ?? "NASDAQ:AAPL",
         interval: "D",
         timezone: "America/New_York",
-        style: "1",
+        style: "1", // candlestick
         toolbar_bg: "#f1f3f6",
         enable_publishing: false,
         allow_symbol_change: true,
-        hide_side_toolbar: false,
+        hide_side_toolbar: false, // show drawing tools
+        hide_top_toolbar: false,
+        hide_legend: false,
+        save_image: true,
         details: true,
+        hotlist: true,
+        calendar: false,
         withdateranges: true,
         studies: props.studies ?? [
           "RSI@tv-basicstudies",
           "MASimple@tv-basicstudies",
           "MACD@tv-basicstudies",
+          "Volume@tv-basicstudies",
         ],
         ...props.extraConfig,
       };
@@ -162,19 +168,11 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
           {
             title: "Indices",
             symbols: [
-              { s: "NASDAQ:NDX", d: "NASDAQ-100" },
-              { s: "NASDAQ:ONEQ", d: "NASDAQ Composite" },
-              { s: "SP:SPX", d: "S&P 500" },
-              { s: "TVC:DJI", d: "Dow Jones" },
-            ],
-          },
-          {
-            title: "Funds",
-            symbols: [
-              { s: "NASDAQ:QQQ", d: "Invesco QQQ" },
-              { s: "AMEX:SPY", d: "SPDR S&P 500" },
-              { s: "NASDAQ:SMH", d: "Semis ETF" },
-              { s: "NASDAQ:XLK", d: "Tech Sector" },
+              { s: "NASDAQ:QQQ", d: "NASDAQ-100 ETF" },
+              { s: "NYSEARCA:SPY", d: "S&P 500 ETF" },
+              { s: "NASDAQ:SMH", d: "Semiconductor ETF" },
+              { s: "NASDAQ:XLK", d: "Tech Sector ETF" },
+              { s: "NASDAQ:IBB", d: "Biotech ETF" },
             ],
           },
           {
@@ -183,7 +181,18 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
               { s: "CME_MINI:ES1!", d: "S&P 500 Fut" },
               { s: "CME_MINI:NQ1!", d: "NASDAQ Fut" },
               { s: "CBOT_MINI:YM1!", d: "Dow Fut" },
-              { s: "COMEX:GC1!", d: "Gold" },
+              { s: "COMEX:GC1!", d: "Gold Fut" },
+              { s: "NYMEX:CL1!", d: "Crude Oil Fut" },
+            ],
+          },
+          {
+            title: "Forex & Crypto",
+            symbols: [
+              { s: "FX:EURUSD", d: "EUR/USD" },
+              { s: "FX:GBPUSD", d: "GBP/USD" },
+              { s: "FX:USDJPY", d: "USD/JPY" },
+              { s: "BITSTAMP:BTCUSD", d: "Bitcoin" },
+              { s: "BITSTAMP:ETHUSD", d: "Ethereum" },
             ],
           },
         ],
@@ -270,7 +279,8 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
 export function TradingViewWidget(props: TVWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [inView, setInView] = useState(false);
+  // Start with inView=true so widgets load immediately (no scroll needed)
+  const [inView, setInView] = useState(true);
   const configKey = JSON.stringify({
     type: props.type,
     symbol: props.symbol,
@@ -280,7 +290,7 @@ export function TradingViewWidget(props: TVWidgetProps) {
     extraConfig: props.extraConfig,
   });
 
-  // Lazy-load via IntersectionObserver
+  // Lazy-load via IntersectionObserver as backup (in case initial render is below fold)
   useEffect(() => {
     const el = containerRef.current;
     if (!el || inView) return;
@@ -291,7 +301,7 @@ export function TradingViewWidget(props: TVWidgetProps) {
           obs.disconnect();
         }
       },
-      { rootMargin: "200px" }
+      { rootMargin: "300px" }
     );
     obs.observe(el);
     return () => obs.disconnect();

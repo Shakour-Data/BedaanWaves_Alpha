@@ -166,40 +166,39 @@ export default function Home() {
               </span>
             </div>
           </div>
-          {/* Full-width, 560px tall for maximum chart detail */}
-          <div className="h-[560px] w-full overflow-hidden rounded border border-border bg-white">
+          {/* Full-width, 600px tall for maximum chart detail */}
+          <div className="h-[600px] w-full overflow-hidden rounded border border-border bg-white">
             {selected && bottomView === "chart" ? (
               <TradingViewWidget
+                key={`chart-${selected}`}
                 type="advanced-chart"
                 symbol={selected}
                 theme="light"
-                height={560}
+                height={600}
                 studies={[
-                  "RSI@tv-basicstudies",
-                  "MASimple@tv-basicstudies",
-                  "MACD@tv-basicstudies",
-                  "BB@tv-basicstudies",
                   "Volume@tv-basicstudies",
-                  "IchimokuCloud@tv-basicstudies",
-                  "ADX@tv-basicstudies",
+                  "RSI@tv-basicstudies",
                 ]}
                 extraConfig={{
+                  style: "1",
+                  interval: "D",
                   hide_side_toolbar: false,
-                  details: true,
-                  withdateranges: true,
+                  hide_top_toolbar: false,
+                  hide_legend: false,
                   allow_symbol_change: true,
+                  withdateranges: true,
+                  save_image: true,
+                  details: true,
                   calendar: false,
-                  hotlist: false,
-                  news: ["headlines"],
-                  fundamentals: false,
-                  support_host: "https://www.tradingview.com",
+                  hotlist: true,
                 }}
                 showAttribution
               />
             ) : (
               <TradingViewWidget
+                key="heatmap"
                 type="stock-heatmap"
-                height={560}
+                height={600}
                 theme="light"
               />
             )}
@@ -215,10 +214,11 @@ export default function Home() {
                 TradingView · real-time indices & funds
               </span>
             </div>
-            <div className="h-[400px] w-full overflow-hidden rounded border border-border bg-white">
+            <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-white">
               <TradingViewWidget
+                key="market-overview"
                 type="market-overview"
-                height={400}
+                height={450}
                 theme="light"
               />
             </div>
@@ -230,10 +230,11 @@ export default function Home() {
                 TradingView · real macro events
               </span>
             </div>
-            <div className="h-[400px] w-full overflow-hidden rounded border border-border bg-white">
+            <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-white">
               <TradingViewWidget
+                key="economic-calendar"
                 type="events"
-                height={400}
+                height={450}
                 theme="light"
               />
             </div>
