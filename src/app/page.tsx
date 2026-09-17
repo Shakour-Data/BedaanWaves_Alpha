@@ -22,7 +22,7 @@ export default function Home() {
   const [selected, setSelected] = useState<string | null>("AAPL");
   const [compareTicker, setCompareTicker] = useState<string | undefined>(undefined);
   const [rightTab, setRightTab] = useState<"drilldown" | "watchlists">("drilldown");
-  // Toggle between TradingView chart (default when symbol selected) and heatmap
+  // Toggle between real candlestick chart (default when symbol selected) and heatmap
   const [bottomView, setBottomView] = useState<"chart" | "heatmap">("chart");
 
   // Auto-seed on first load if DB is empty (the /api/seed endpoint is idempotent).
@@ -57,7 +57,8 @@ export default function Home() {
             <span className="font-semibold">Not financial advice.</span>{" "}
             BedaanWaves scores are algorithmic research signals derived from
             cross-sectional percentile transforms + per-symbol ML coefficients.
-            TradingView widgets are display-only and never feed the scoring path.
+            Charts, heatmap & market indicators are real-data native (spec §12) and
+            never feed the scoring path.
           </span>
         </div>
 
@@ -68,7 +69,7 @@ export default function Home() {
           </div>
 
           {/* Right column: drilldown + watchlists */}
-          <div className="flex min-h-[480px] flex-col rounded border border-border bg-card/50">
+          <div className="flex flex-col rounded border border-border bg-card/50">
             <div className="flex border-b border-border bg-card">
               <button
                 onClick={() => setRightTab("drilldown")}
@@ -97,7 +98,7 @@ export default function Home() {
               )}
             </div>
 
-            <div className="flex-1 overflow-hidden">
+            <div className="h-auto">
               {rightTab === "drilldown" ? (
                 selected ? (
                   <SymbolDrilldown
@@ -107,12 +108,12 @@ export default function Home() {
                     onCompareChange={setCompareTicker}
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+                  <div className="flex items-center justify-center text-xs text-muted-foreground">
                     Select a symbol from the rankings or search above.
                   </div>
                 )
               ) : (
-                <div className="h-full overflow-y-auto p-3">
+                <div className="overflow-y-auto p-3">
                   <WatchlistAlertsPanel onSymbolClick={handleSelect} />
                 </div>
               )}
@@ -120,7 +121,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* ── Bottom area: TradingView chart OR heatmap (full-width, taller) ── */}
+        {/* ── Bottom area: real candlestick chart OR heatmap (full-width, taller) ── */}
         <div className="rounded border border-border bg-card/50 p-2">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -128,10 +129,10 @@ export default function Home() {
                 <>
                   <CandlestickChart className="h-4 w-4 text-primary" />
                   <span className="text-sm font-semibold">
-                    TradingView Advanced Chart — {selected}
+                    Candlestick Chart — {selected}
                   </span>
                   <Badge variant="outline" className="text-[9px]">
-                    RSI · SMA · MACD · Drawing Tools · Date Ranges
+                    SMA/EMA/BB · Crosshair · Zoom · Pan · H-Lines
                   </Badge>
                 </>
               ) : (

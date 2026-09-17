@@ -4,9 +4,10 @@
 # then re-runs the V2 scoring engine + per-symbol coefficient training.
 # This script is designed to be run periodically (every 2 hours).
 set -e
-cd /home/z/my-project
+cd "$(dirname "$0")/.."
 
-LOG="/tmp/bedaan-refresh.log"
+LOG="logs/bedaan-refresh.log"
+mkdir -p logs
 echo "[$(date)] === Starting BedaanWaves auto-refresh ===" | tee -a "$LOG"
 
 # Step 1: Fetch latest OHLCV + fundamentals (yfinance)
@@ -33,13 +34,13 @@ timeout 180 python3 scripts/fetch_real_news.py >> "$LOG" 2>&1 || {
 
 # Step 4: Re-run V2 scoring engine + per-symbol coefficient training
 echo "[$(date)] [4/4] Re-scoring + re-training coefficients..." | tee -a "$LOG"
-timeout 300 bun run scripts/seed.ts >> "$LOG" 2>&1 || {
+timeout 300 npx tsx scripts/seed.ts >> "$LOG" 2>&1 || {
     echo "[$(date)] ERROR: re-scoring failed!" | tee -a "$LOG"
     exit 1
 }
 
 # Record last-refresh timestamp
-date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/bedaan-last-refresh.txt
+date -u +"%Y-%m-%dT%H:%M:%SZ" > logs/bedaan-last-refresh.txt
 
 echo "[$(date)] === Auto-refresh complete ===" | tee -a "$LOG"
 echo "---" | tee -a "$LOG"

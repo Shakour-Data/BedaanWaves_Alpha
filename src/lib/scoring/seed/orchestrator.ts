@@ -19,7 +19,13 @@ import {
 import { scoreMarket, type CoefficientLookup } from "../engine";
 import { learnCoefficients, type TrainingSample } from "../learner";
 
-const SCORING_DAYS = 90; // last 90 trading days get scored + persisted
+const SCORING_DAYS = 90; // last 90 trading days (~3mo) for scoring + training
+
+// Build O(1) lookup map from seed tickers for performance at scale
+const SEED_MAP = new Map<string, string>();
+for (const s of SEED_TICKERS_DEDUP) {
+  SEED_MAP.set(s.ticker, s.name);
+}
 
 export interface SeedResult {
   symbols: number;
@@ -73,7 +79,7 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
     const walk = universe.walks.get(t) as RealTickerWalk;
     return {
       ticker: t,
-      name: SEED_TICKERS_DEDUP.find((s) => s.ticker === t)?.name ?? t,
+      name: SEED_MAP.get(t) ?? t,
       exchange: "NASDAQ",
       sector: walk.sector,
       industry: walk.industry,
@@ -97,6 +103,10 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
       priceAtLabel: number;
     }>
   > = {};
+  // Per-ticker macro sensitivity tracking (for per-ticker macro score differentiation)
+  const macroValuesByDay: Record<string, number>[] = []; // index → { dbField: value }
+  const dailyReturnsByTicker: Record<string, number[]> = {}; // ticker → returns[]
+  const prevPrices: Record<string, number> = {};
 
   const scoringDays = Math.min(SCORING_DAYS, universe.tradingDays.length);
   console.log(`[seed] Scoring ${scoringDays} days (real data)`);
@@ -123,6 +133,51 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
       }
     }
 
+    // Track macro values and daily returns for per-ticker sensitivity computation
+    macroValuesByDay.push(day.macro);
+    for (const ticker of universe.tickers) {
+      const price = day.prices[ticker]?.price ?? 0;
+      const prev = prevPrices[ticker];
+      if (prev && prev > 0 && price > 0) {
+        const ret = ((price - prev) / prev) * 100;
+        if (!dailyReturnsByTicker[ticker]) dailyReturnsByTicker[ticker] = [];
+        dailyReturnsByTicker[ticker].push(ret);
+      }
+      prevPrices[ticker] = price;
+    }
+
+    // Compute per-ticker macro sensitivities (beta of ticker returns vs macro changes)
+    // from walk-forward history. Need at least 10 days of both returns and macro data.
+    const macroSensitivities: Record<string, Record<string, number>> = {};
+    const MIN_SENS_DAYS = 10;
+    if (i >= MIN_SENS_DAYS && macroValuesByDay.length >= MIN_SENS_DAYS + 1) {
+      const macroFields = Object.keys(day.macro);
+      for (const ticker of universe.tickers) {
+        const returns = dailyReturnsByTicker[ticker] ?? [];
+        if (returns.length < MIN_SENS_DAYS) continue;
+        const betas: Record<string, number> = {};
+        for (const field of macroFields) {
+          // Build paired (macro change, ticker return) for all days.
+          // Include zero-change days — they still contribute returns to the regression.
+          const macroChanges: number[] = [];
+          const pairedReturns: number[] = [];
+          const nRet = returns.length;
+          for (let k = 0; k < nRet; k++) {
+            const macroNow = macroValuesByDay[k + 1]?.[field];
+            const macroPrev = macroValuesByDay[k]?.[field];
+            if (macroNow !== undefined && macroPrev !== undefined) {
+              macroChanges.push(macroNow - macroPrev);
+              pairedReturns.push(returns[k]);
+            }
+          }
+          if (macroChanges.length >= MIN_SENS_DAYS) {
+            betas[field] = computeSensitivity(pairedReturns, macroChanges);
+          }
+        }
+        macroSensitivities[ticker] = betas;
+      }
+    }
+
     const snapshots = scoreMarket({
       assetMetrics: day.assetMetrics,
       coefficients: coeffs,
@@ -130,6 +185,7 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
       recentOveralls: recentOverallsByTicker,
       prices: day.prices,
       macroHistory: day.macroHistory,
+      macroSensitivities,
     });
 
     for (const s of snapshots) {
@@ -367,6 +423,31 @@ function hashStr(s: string): number {
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
+}
+
+// ── Compute sensitivity = Pearson correlation between ticker returns and macro changes ───
+// Unitless and bounded [-1, 1], comparable across macro indicators with different scales.
+function computeSensitivity(returns: number[], macroChanges: number[]): number {
+  const n = Math.min(returns.length, macroChanges.length);
+  if (n < 3) return 0;
+  let sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) {
+    sx += returns[i];
+    sy += macroChanges[i];
+  }
+  const mx = sx / n;
+  const my = sy / n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) {
+    const a = returns[i] - mx;
+    const b = macroChanges[i] - my;
+    num += a * b;
+    dx += a * a;
+    dy += b * b;
+  }
+  const den = Math.sqrt(dx * dy);
+  if (den < 1e-15) return 0;
+  return num / den;
 }
 
 // Real news — loaded from real-news-data.json (fetched via z-ai web-search)

@@ -104,7 +104,7 @@ export function RadarScoreChart({ ticker }: Props) {
         </div>
       </div>
 
-      <div className="h-72 w-full">
+      <div className="h-56 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <RadarChart data={chartData} outerRadius="72%">
             <PolarGrid stroke="#e5e7eb" />

@@ -158,3 +158,24 @@ Stage Summary:
 - UI verified: title, MarketSidebar "auto-refresh ON" indicator with live stats (97 symbols / 8641 snapshots / 388 coefficients / 51 news / 0 cold-start), news ribbon shows real BULLISH/BEARISH/NEUTRAL headlines from U.Michigan, BLS, CNBC, Bloomberg with proper ticker tags.
 - Screenshot saved: /tmp/bedaan-auto-refresh.png (364 KB).
 - Pre-existing issue from Task verify-final (pgrep mismatch) is now RESOLVED.
+
+---
+Task ID: expand-nasdaq-universe
+Agent: orchestrator
+Task: Expand NASDAQ universe from ~97 to ~5600 symbols ("نزدک" = Nasdaq in Persian)
+
+Work Log:
+- Downloaded complete NASDAQ symbol list (5592 symbols) from datasets/nasdaq-listings GitHub repo (official NASDAQ symbol directory data)
+- Generated src/lib/scoring/seed/universe.ts with 5582 unique NASDAQ symbols (test issues excluded), with sector/industry inferred from name patterns
+- Built scripts/fetch_ohlcv_v2.py: optimized batch OHLCV fetcher using yfinance (200-symbol batches, resume-capable, progress logging)
+- Built scripts/fetch_real_macro2.py: FRED macro data fetcher (18 indicators)
+- Fetched OHLCV data for 5579 symbols via yfinance batch download (~9 minutes), 2,343,026 total OHLCV bars, 350.7MB
+- Built scripts/seed_all_symbols.ts: Prisma-based bulk seed (5579 symbols registered in DB via upsert in 11 batches of 500)
+- Built scripts/update_names.ts: Updated 5578 symbol names from official NASDAQ CSV
+- Database (prisma/db/custom.db): 5589 symbols, 8641 snapshots (97 with full scoring), 388 coefficients, 0 mock records
+- All symbols searchable via /api/symbols autocomplete
+- Rankings functional for scored symbols (96 with full data)
+- Site renders correctly, auto-refresh indicator shows "Symbols 5589"
+- Lint clean (0 errors in changed files, pre-existing errors in unrelated files only)
+
+- Database (prisma/db/custom.db): NOW contains 5589 symbol records

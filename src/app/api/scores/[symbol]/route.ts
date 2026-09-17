@@ -1,6 +1,7 @@
 // GET /api/scores/[symbol] — latest snapshot for a symbol
 import { NextResponse } from "next/server";
 import { fetchSymbolDetail } from "@/lib/scoring/queries";
+import { gradeFor } from "@/lib/scoring/transforms";
 
 export async function GET(
   _req: Request,
@@ -21,7 +22,7 @@ export async function GET(
     isEtf: sym.isEtf,
     capturedAt: s.capturedAt.toISOString(),
     overall: s.overall,
-    grade: s.grade,
+    grade: s.grade || gradeFor(s.overall),
     signals: JSON.parse(s.signals),
     dimensionScores: JSON.parse(s.dimensionScores),
     subDimensionScores: JSON.parse(s.subDimensionScores),

@@ -61,5 +61,40 @@ workspace-*.tar
 
 # Temporary render/debug files
 analyze_render.js
+analyze2.js
+analyze3.js
+analyze4.js
+analyze5.js
+check_page.js
+check_prod2.js
 page2.html
+page3.html
+page4.html
 page_rendered.html
+page_prod.html
+page_prod2.html
+test_shot.png
+
+# Local SQLite databases and backups (do not track)
+/db/custom.db
+/db/custom.db.bak
+
+# Prisma database (local SQLite, do not track)
+/prisma/db/
+
+# Temporary JSON data files
+src/lib/scoring/seed/real-market-data.json.tmp
+
+# Archives
+*.zip
+
+# NASDAQ symbol/data files (regenerable or downloaded)
+nasdaq-listed-symbols.csv
+nasdaq-listed.csv
+otherlisted.txt
+scripts/nasdaq_macro.csv
+scripts/top_200.json
+scripts/top_500.json
+
+# Build/output logs
+seed.out

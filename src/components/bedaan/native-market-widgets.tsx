@@ -14,10 +14,9 @@ import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Activity, DollarSign, Wind } from "lucide-react";
+import { AlertTriangle, Activity, DollarSign, Wind, ChevronDown } from "lucide-react";
 import { ResponsiveContainer, Treemap } from "recharts";
 import {
-  sma,
   rsi,
   macd,
   bollingerPercentB,
@@ -27,6 +26,9 @@ import {
   roc,
   returns,
 } from "@/lib/technical-indicators";
+import { CandlestickChart } from "@/components/bedaan/candlestick-chart";
+import { gradeColor, clamp } from "@/lib/scoring/transforms";
+import type { DimensionKey } from "@/lib/scoring/metric-universe";
 import type { MacroIndicator } from "@/lib/real-store";
 
 interface CandleBar {
@@ -108,12 +110,6 @@ export function NativeCandlestickChart({
   const bars = data?.bars ?? [];
   const meta = data?.meta;
 
-  const closes = bars.map((b) => b.close);
-  const rsiV = closes.length > 14 ? rsi(closes, 14) : null;
-  const macdV = macd(closes);
-  const sma20 = sma(closes, 20);
-  const sma50 = sma(closes, 50);
-
   return (
     <div className="flex h-full w-full flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -147,184 +143,8 @@ export function NativeCandlestickChart({
       ) : isError || bars.length === 0 ? (
         <NoDataMessage label="No real candle data available" />
       ) : (
-        <CandleSvg bars={bars} height={height - 42} />
+        <CandlestickChart bars={bars} ticker={ticker} height={height - 80} />
       )}
-    </div>
-  );
-}
-
-function IndicatorStrip({
-  items,
-}: {
-  items: Array<{ label: string; value: string; sub?: string }>;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-3 rounded border border-border bg-card/50 px-2 py-1.5 text-[10px]">
-      {items.map((it) => (
-        <span key={it.label} className="flex items-center gap-1.5">
-          <span className="text-muted-foreground">{it.label}:</span>
-          <span className="font-mono">{it.value}</span>
-          {it.sub && <span className="text-[8px] text-muted-foreground">({it.sub})</span>}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function CandleSvg({ bars, height }: { bars: CandleBar[]; height: number }) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const plotW = 760;
-  const MARGIN = { top: 24, right: 48, bottom: 34, left: 56 };
-  const fullH = Math.max(height, 260);
-  const volH = Math.max(fullH * 0.32, 60);
-  const candlePlotH = fullH - volH - MARGIN.top - 8;
-  const volPlotH = volH - 16;
-
-  const minPrice = Math.min(...bars.map((b) => b.low));
-  const maxPrice = Math.max(...bars.map((b) => b.high));
-  const rng = maxPrice - minPrice || maxPrice || 1;
-  const pad = rng * 0.08;
-  const hi = maxPrice + pad;
-  const lo = minPrice - pad;
-  const yPx = (v: number) => MARGIN.top + ((hi - v) / (hi - lo)) * candlePlotH;
-
-  const n = bars.length;
-  const slot = plotW / n;
-  const bodyW = Math.max(slot * 0.6, 2);
-  const maxVol = Math.max(...bars.map((b) => b.volume), 1);
-
-  const h = hoverIdx != null ? bars[hoverIdx] : bars[bars.length - 1];
-  const up = (h?.close ?? 0) >= (h?.open ?? 0);
-
-  return (
-    <div
-      className="relative w-full cursor-crosshair overflow-hidden"
-      onMouseLeave={() => setHoverIdx(null)}
-    >
-      <svg
-        viewBox={`0 0 ${plotW + MARGIN.left + MARGIN.right} ${fullH}`}
-        className="block h-full w-full"
-      >
-        {/* price grid + y labels */}
-        {[0, 25, 50, 75, 100].map((p) => {
-          const v = lo + (hi - lo) * (p / 100);
-          const y = MARGIN.top + (p / 100) * candlePlotH;
-          return (
-            <g key={p} transform={`translate(0,${y})`}>
-              <line
-                x1={MARGIN.left}
-                x2={plotW + MARGIN.left}
-                stroke="#e2e8f0"
-                strokeWidth={1}
-              />
-              <text
-                x={MARGIN.left - 6}
-                y={12}
-                textAnchor="end"
-                fontSize={10}
-                fill="#94a3b8"
-              >
-                {priceFmt(v)}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* candles */}
-        {bars.map((b, i) => {
-          const x = MARGIN.left + (i + 0.5) * slot;
-          const isUp = b.close >= b.open;
-          const bodyFill = isUp
-            ? "rgba(34,197,94,0.85)"
-            : "rgba(239,68,68,0.85)";
-          return (
-            <g key={i} onMouseMove={() => setHoverIdx(i)}>
-              <line
-                x1={x}
-                x2={x}
-                y1={yPx(b.high)}
-                y2={yPx(b.low)}
-                stroke={isUp ? "#22c55e" : "#ef4444"}
-                strokeWidth={1}
-              />
-              <rect
-                x={x - bodyW / 2}
-                y={Math.min(yPx(b.open), yPx(b.close))}
-                width={bodyW}
-                height={Math.max(Math.abs(yPx(b.close) - yPx(b.open)), 1)}
-                fill={bodyFill}
-                stroke={isUp ? "#22c55e" : "#ef4444"}
-                strokeWidth={0.5}
-                rx={1}
-              />
-            </g>
-          );
-        })}
-
-        {/* hover guide + annotation */}
-        {hoverIdx != null && (
-          <>
-            <line
-              x1={MARGIN.left + (hoverIdx + 0.5) * slot}
-              x2={MARGIN.left + (hoverIdx + 0.5) * slot}
-              y1={MARGIN.top}
-              y2={MARGIN.top + candlePlotH}
-              stroke="#cbd5e1"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-            />
-            <foreignObject
-              x={MARGIN.left + (hoverIdx + 0.5) * slot + 6}
-              y={MARGIN.top}
-              width={160}
-              height={82}
-            >
-              <div className="rounded border border-border bg-background/95 p-1 text-[9px] shadow">
-                <div className="font-mono">{h.date}</div>
-                <div>O {priceFmt(h.open)}</div>
-                <div>H {priceFmt(h.high)}</div>
-                <div>L {priceFmt(h.low)}</div>
-                <div className={up ? "text-green-600" : "text-red-500"}>
-                  C {priceFmt(h.close)} ({pctFmt(((h.close - h.open) / h.open) * 100)})
-                </div>
-                <div>Vol {Math.round(h.volume / 1e6)}M</div>
-              </div>
-            </foreignObject>
-          </>)}
-
-        {/* volume histogram */}
-        {bars.map((b, i) => {
-          const vh = (b.volume / maxVol) * volPlotH;
-          const isUp = b.close >= b.open;
-          return (
-            <rect
-              key={i}
-              x={MARGIN.left + (i + 0.5) * slot - bodyW / 2}
-              y={fullH - volPlotH - 8 + (volPlotH - vh)}
-              width={bodyW}
-              height={Math.max(vh, 0.5)}
-              fill={isUp ? "rgba(34,197,94,0.55)" : "rgba(239,68,68,0.55)"}
-            />
-          );
-        })}
-
-        {/* x labels */}
-        <text x={MARGIN.left} y={fullH - 4} fontSize={10} fill="#94a3b8">
-          {bars[0].date}
-        </text>
-        <text
-          x={plotW + MARGIN.left}
-          y={fullH - 4}
-          textAnchor="end"
-          fontSize={10}
-          fill="#94a3b8"
-        >
-          {bars[bars.length - 1].date}
-        </text>
-      </svg>
-      <div className="absolute bottom-1 right-2 text-[9px] text-muted-foreground">
-        Source: yfinance · real, corporate-action adjusted (spec §1.1)
-      </div>
     </div>
   );
 }
@@ -338,9 +158,102 @@ interface HeatmapRow {
   grade: string;
   overall: number;
   sector: string;
+  dimensionScores: Record<DimensionKey, number>;
 }
 
-// ── Heatmap (treemap by market cap, colored by real daily Δ%) ────────────────────
+type ColorMode =
+  | "priceChange"
+  | "overall"
+  | "grade"
+  | "fundamental"
+  | "technical"
+  | "sentiment"
+  | "risk"
+  | "macro"
+  | "ai";
+
+const COLOR_MODES: Array<{ key: ColorMode; label: string }> = [
+  { key: "priceChange", label: "Δ%" },
+  { key: "overall", label: "Overall" },
+  { key: "grade", label: "Grade" },
+  { key: "fundamental", label: "Fund." },
+  { key: "technical", label: "Tech" },
+  { key: "sentiment", label: "Sent." },
+  { key: "risk", label: "Risk" },
+  { key: "macro", label: "Macro" },
+  { key: "ai", label: "AI" },
+];
+
+const DIM_LABELS: Record<DimensionKey, string> = {
+  fundamental: "Fundamental",
+  technical: "Technical",
+  sentiment: "Sentiment",
+  risk: "Risk",
+  macro: "Macro",
+  ai: "AI",
+};
+
+function scoreGradient(s: number): string {
+  const cl = clamp(s, 0, 100);
+  const hue = (cl / 100) * 140;
+  return `hsl(${hue}, 72%, 42%)`;
+}
+
+function priceChangeColor(pc: number, maxAbs: number): string {
+  const ratio = Math.min(1, Math.abs(pc) / maxAbs);
+  if (pc > 0) return `rgba(22,100,55,${0.4 + ratio * 0.55})`;
+  if (pc < 0) return `rgba(180,25,25,${0.4 + ratio * 0.55})`;
+  return "rgba(148,163,184,0.4)";
+}
+
+function gradeToScore(grade: string | undefined): number {
+  switch (grade) {
+    case "STRONG_BULLISH": return 92;
+    case "BULLISH": return 77;
+    case "NEUTRAL": return 55;
+    case "BEARISH": return 30;
+    case "STRONG_BEARISH": return 12;
+    default: return 50;
+  }
+}
+
+function getTileScore(props: HeatTileProps, mode: ColorMode): number {
+  switch (mode) {
+    case "priceChange":
+      return props.priceChange ?? 0;
+    case "overall":
+      return props.overall ?? 50;
+    case "grade":
+      return gradeToScore(props.grade);
+    case "fundamental":
+      return props.dimFundamental ?? 50;
+    case "technical":
+      return props.dimTechnical ?? 50;
+    case "sentiment":
+      return props.dimSentiment ?? 50;
+    case "risk":
+      return props.dimRisk ?? 50;
+    case "macro":
+      return props.dimMacro ?? 50;
+    case "ai":
+      return props.dimAi ?? 50;
+    default:
+      return 0;
+  }
+}
+
+function getModeFill(score: number, mode: ColorMode, maxAbs: number): string {
+  switch (mode) {
+    case "priceChange":
+      return priceChangeColor(score, maxAbs);
+    case "grade":
+      return gradeColor(score as never);
+    default:
+      return scoreGradient(score);
+  }
+}
+
+// ── Heatmap (treemap by market cap, colored by selected metric) ────────────────────
 export function NativeHeatmap({ height = 600 }: { height?: number }) {
   const { data, isLoading, isError } = useQuery<{
     rows: HeatmapRow[];
@@ -356,14 +269,12 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
     staleTime: 5 * 60_000,
   });
 
+  const [colorMode, setColorMode] = useState<ColorMode>("priceChange");
+
   if (isLoading) return <Skeleton className="h-full w-full" />;
   if (isError || !data?.rows?.length) return <NoDataMessage label="No ranking data" />;
 
-  const maxAbs = Math.max(1, ...data.rows.map((r) => Math.abs(r.priceChange)));
-  const colorFor = (pc: number) =>
-    pc > 0
-      ? `rgba(34,197,94,${Math.max(0.25, Math.min(0.9, pc / maxAbs))})`
-      : `rgba(239,68,68,${Math.max(0.25, Math.min(0.9, Math.abs(pc) / maxAbs))})`;
+  const maxPriceChangeAbs = Math.max(1, ...data.rows.map((r) => Math.abs(r.priceChange)));
 
   const treeData = data.rows
     .slice()
@@ -375,36 +286,90 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
       overall: r.overall,
       grade: r.grade,
       price: r.price,
+      dimFundamental: r.dimensionScores?.fundamental ?? 50,
+      dimTechnical: r.dimensionScores?.technical ?? 50,
+      dimSentiment: r.dimensionScores?.sentiment ?? 50,
+      dimRisk: r.dimensionScores?.risk ?? 50,
+      dimMacro: r.dimensionScores?.macro ?? 50,
+      dimAi: r.dimensionScores?.ai ?? 50,
     }));
 
+  const modeLabel =
+    colorMode === "priceChange"
+      ? "daily Δ%"
+      : colorMode === "overall"
+      ? "overall score"
+      : colorMode === "grade"
+      ? "grade"
+      : `${DIM_LABELS[colorMode]} score`;
+  const currentMode = COLOR_MODES.find((m) => m.key === colorMode)!;
+
   return (
-    <div className="h-full w-full">
-      <div className="mb-2 flex items-center justify-between text-xs">
-        <span>
-          {data.total} real NASDAQ tickers · market-cap weighted · colored by real daily Δ%
-        </span>
-        <span className="text-[9px] text-muted-foreground">
-          as of {new Date(data.latestAt).toLocaleDateString()}
-        </span>
-      </div>
-      <ResponsiveContainer width="100%" height={height - 40}>
+    <div className="relative h-full w-full">
+      <ResponsiveContainer width="100%" height="100%">
         <Treemap
           data={treeData}
           dataKey="value"
           stroke="#ffffff22"
           isAnimationActive={true}
-          content={<HeatTile colorFor={colorFor} />}
+          content={<HeatTile colorMode={colorMode} maxPriceChangeAbs={maxPriceChangeAbs} />}
         />
       </ResponsiveContainer>
-      <div className="mt-2 flex items-center justify-end gap-3 text-[9px] text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <span className="block h-2 w-4 rounded bg-green-500/70" /> up
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="block h-2 w-4 rounded bg-red-500/70" /> down
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 px-1 pt-1">
+        <div className="flex items-center gap-2 text-xs">
+          <span>{data.total} real NASDAQ tickers · market-cap weighted</span>
+          <button
+            className="flex items-center gap-0.5 rounded border border-border bg-background px-2 py-0.5 text-[10px] hover:bg-accent"
+            onClick={() => {
+              const idx = COLOR_MODES.findIndex((m) => m.key === colorMode);
+              const next = COLOR_MODES[(idx + 1) % COLOR_MODES.length];
+              setColorMode(next.key);
+            }}
+          >
+            <span className="font-semibold">{currentMode.label}</span>
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </div>
+        <span className="text-[9px] text-muted-foreground">
+          colored by {modeLabel} · as of {new Date(data.latestAt).toLocaleDateString()}
         </span>
       </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-2 px-1 pb-1 text-[9px] text-muted-foreground">
+        <ColorModeLegend mode={colorMode} />
+      </div>
     </div>
+  );
+}
+
+function ColorModeLegend({ mode }: { mode: ColorMode }) {
+  if (mode === "priceChange") {
+    return (
+      <>
+        <span className="flex items-center gap-1">
+          <span className="block h-2 w-3 rounded" style={{ backgroundColor: "rgba(22,100,55,0.8)" }} /> up
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="block h-2 w-3 rounded" style={{ backgroundColor: "rgba(180,25,25,0.8)" }} /> down
+        </span>
+      </>
+    );
+  }
+  if (mode === "grade") {
+    return (
+      <>
+        {(["STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"] as const).map((g) => (
+          <span key={g} className="flex items-center gap-1">
+            <span className="block h-2 w-3 rounded" style={{ backgroundColor: gradeColor(g) }} />
+            {g.replace("_", " ").split(" ")[0]}
+          </span>
+        ))}
+      </>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1">
+      <span className="block h-2 w-10 rounded" style={{ background: "linear-gradient(90deg, #dc2626, #eab308, #16a34a)" }} /> low → high
+    </span>
   );
 }
 
@@ -415,31 +380,55 @@ interface HeatTileProps {
   height?: number;
   name?: string;
   priceChange?: number;
-  colorFor: (pc: number) => string;
+  overall?: number;
+  grade?: string;
+  dimFundamental?: number;
+  dimTechnical?: number;
+  dimSentiment?: number;
+  dimRisk?: number;
+  dimMacro?: number;
+  dimAi?: number;
+  colorMode: ColorMode;
+  maxPriceChangeAbs: number;
 }
 function HeatTile(props: HeatTileProps) {
-  const { x, y, width, height, name, priceChange, colorFor } = props;
+  const { x, y, width, height, name, colorMode, maxPriceChangeAbs } = props;
   // recharts clones this element with the layout node's fields spread as props
   // (x, y, width, height, name, priceChange, ...). Render only real leaf tiles;
-  // skip the synthetic root (no `name`) and sub-16px slivers.
-  if (!name || !x || !y || !width || !height || width < 16 || height < 16)
-    return null;
-  const pc = priceChange ?? 0;
-  const fill = colorFor(pc);
+  // skip the synthetic root (no `name`). Use null/undefined checks — x=0 or y=0
+  // are valid positions at the top-left of the treemap.
+  if (!name || x == null || y == null || !width || !height) return null;
+  const score = getTileScore(props, colorMode);
+  const fill = getModeFill(score, colorMode, maxPriceChangeAbs);
+  const showLabel = width >= 30 && height >= 20;
+  const showScore = height >= 28;
+  let scoreText = "";
+  switch (colorMode) {
+    case "priceChange":
+      scoreText = `${score > 0 ? "+" : ""}${score.toFixed(1)}%`;
+      break;
+    case "grade":
+      scoreText = props.grade ?? "";
+      break;
+    default:
+      scoreText = score.toFixed(0);
+  }
   return (
     <g className="treemap-tile" style={{ cursor: "pointer" }}>
       <rect x={x} y={y} width={width} height={height} fill={fill} rx={3} />
-      <text
-        x={x + 3}
-        y={y + 12}
-        fontSize={10}
-        fill="#ffffff"
-        fontWeight={600}
-        pointerEvents="none"
-      >
-        {name}
-      </text>
-      {height > 30 && (
+      {showLabel && (
+        <text
+          x={x + 3}
+          y={y + 12}
+          fontSize={10}
+          fill="#ffffff"
+          fontWeight={600}
+          pointerEvents="none"
+        >
+          {name}
+        </text>
+      )}
+      {showScore && (
         <text
           x={x + 3}
           y={y + height - 5}
@@ -447,8 +436,7 @@ function HeatTile(props: HeatTileProps) {
           fill="#ffffffdd"
           pointerEvents="none"
         >
-          {pc > 0 ? "+" : ""}
-          {pc.toFixed(1)}%
+          {scoreText}
         </text>
       )}
     </g>

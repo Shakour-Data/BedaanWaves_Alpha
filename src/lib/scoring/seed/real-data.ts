@@ -76,6 +76,33 @@ interface RealMacroFile {
 const DATA_FILE = join(process.cwd(), "src/lib/scoring/seed/real-market-data.json");
 const MACRO_FILE = join(process.cwd(), "src/lib/scoring/seed/real-macro-data.json");
 
+function normalizeMacroPoints(points: unknown): RealMacroPoint[] {
+  if (!Array.isArray(points)) return [];
+  return points.flatMap((point): RealMacroPoint[] => {
+    if (Array.isArray(point)) {
+      const [date, value, releaseDate, source] = point;
+      if (typeof date !== "string" || typeof value !== "number") return [];
+      return [{
+        date,
+        value,
+        ...(typeof releaseDate === "string" ? { release_date: releaseDate } : {}),
+        ...(typeof source === "string" ? { source } : {}),
+      }];
+    }
+    if (point && typeof point === "object") {
+      const candidate = point as Partial<RealMacroPoint>;
+      if (typeof candidate.date !== "string" || typeof candidate.value !== "number") return [];
+      return [{
+        date: candidate.date,
+        value: candidate.value,
+        ...(candidate.release_date != null ? { release_date: candidate.release_date } : {}),
+        ...(candidate.source != null ? { source: candidate.source } : {}),
+      }];
+    }
+    return [];
+  }).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function loadRealData(): {
   per_ticker: Record<string, RealTickerData>;
   macro: Record<string, RealMacroPoint[]>;
@@ -105,9 +132,13 @@ function loadRealData(): {
   } catch {
     // news file may not exist yet
   }
+  const macro = Object.fromEntries(
+    Object.entries({ ...data.macro, ...macroData.macro })
+      .map(([key, points]) => [key, normalizeMacroPoints(points)])
+  );
   return {
     per_ticker: data.per_ticker,
-    macro: { ...data.macro, ...macroData.macro },
+    macro,
     news,
   };
 }

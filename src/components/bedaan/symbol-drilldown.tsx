@@ -84,9 +84,10 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
   });
 
   const detail: SymbolDetail | undefined = q.data;
+  const effectiveGrade = detail?.grade ?? "NEUTRAL";
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col">
       {/* Header */}
       <div className="border-b border-border bg-card px-3 py-2">
         {q.isLoading || !detail ? (
@@ -112,7 +113,7 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
                     borderColor: gradeColor(detail.grade as never),
                   }}
                 >
-                  {detail.grade.replace("_", " ")}
+                   {effectiveGrade.replace("_", " ")}
                 </Badge>
                 {detail.coefficientVersion === "uniform-cold-start" && (
                   <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
@@ -217,7 +218,7 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
       </div>
 
       {/* Tabs */}
-      <div className="flex-1 overflow-hidden">
+      <div className="h-auto overflow-visible">
         <Tabs value={tab} onValueChange={setTab} className="h-full flex flex-col">
           <TabsList className="h-8 w-full justify-start overflow-x-auto rounded-none border-b border-border bg-card px-2">
             <TabsTrigger value="history" className="text-[10px]">
@@ -243,7 +244,7 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 overflow-y-auto p-3">
+          <div className="h-auto p-3">
             <TabsContent value="history" className="mt-0">
               <HistoricalScoreChart ticker={ticker} />
               <div className="mt-4 text-[10px] text-muted-foreground">
@@ -310,9 +311,174 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
             </TabsContent>
           </div>
         </Tabs>
+        <div className="mt-3 rounded border border-border bg-card/50 p-3">
+          <ScoreSummary ticker={ticker} detail={detail} hasSymbol={!!detail} />
+        </div>
       </div>
 
       <TraceModal ticker={ticker} open={traceOpen} onOpenChange={setTraceOpen} />
+    </div>
+  );
+}
+
+function ScoreSummary({ ticker, detail, hasSymbol }: { ticker: string; detail: SymbolDetail | undefined; hasSymbol: boolean }) {
+  const currentScore = detail?.overall ?? 0;
+  const currentGrade = detail?.grade ?? "NEUTRAL";
+  const dimColors: Record<string, string> = {
+    fundamental: "#3b82f6",
+    technical: "#22c55e",
+    sentiment: "#f59e0b",
+    risk: "#ef4444",
+    macro: "#8b5cf6",
+    ai: "#06b6d4",
+  };
+  const dimLabels: Record<string, string> = {
+    fundamental: "Fundamental",
+    technical: "Technical",
+    sentiment: "Sentiment",
+    risk: "Risk",
+    macro: "Macro",
+    ai: "AI",
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-3 py-1">
+      {/* Gauge — center, big */}
+      <ScoreGauge value={currentScore} />
+
+      {/* Score label */}
+      <div className="text-center">
+        <div className="text-3xl font-mono font-bold" style={{ color: gradeColor(currentGrade as never) }}>
+          {currentScore.toFixed(1)}
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          {hasSymbol ? `${ticker} Overall Score` : "Overall Market Score"}
+        </div>
+      </div>
+
+      {/* Stats */}
+      {detail && (
+        <>
+          <div className="grid grid-cols-3 gap-2 w-full text-[10px]">
+            <div className="rounded border border-border bg-card p-2 text-center">
+              <div className="text-muted-foreground">Coverage</div>
+              <div className="font-mono font-bold">{(detail.coverage * 100).toFixed(0)}%</div>
+            </div>
+            <div className="rounded border border-border bg-card p-2 text-center">
+              <div className="text-muted-foreground">Stability</div>
+              <div className="font-mono font-bold">{detail.stabilityIndex.toFixed(2)}</div>
+            </div>
+            <div className="rounded border border-border bg-card p-2 text-center">
+              <div className="text-muted-foreground">90% CI</div>
+              <div className="font-mono font-bold">
+                [{detail.ciLower.toFixed(0)},{detail.ciUpper.toFixed(0)}]
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-6 gap-1 w-full text-[9px]">
+            {DIMENSION_KEYS.map((d) => {
+              const v = detail.dimensionScores[d] ?? 50;
+              return (
+                <div
+                  key={d}
+                  className="rounded p-1 text-center"
+                  style={{ background: dimColors[d] + "18", border: `1px solid ${dimColors[d]}44` }}
+                >
+                  <div style={{ color: dimColors[d] }} className="font-mono font-bold">{v.toFixed(0)}</div>
+                  <div className="text-muted-foreground truncate">{dimLabels[d]}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="rounded border border-border bg-card p-2 text-[10px]">
+            <div className="mb-1 font-semibold text-muted-foreground">Coefficient Info</div>
+            <div className="flex items-center justify-between">
+              <span>Version</span>
+              <span className="font-mono">{detail.coefficientVersion}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Data Hash</span>
+              <span className="font-mono">{detail.rawDataHash.slice(0, 8)}…</span>
+            </div>
+            {detail.coefficientVersion === "uniform-cold-start" && (
+              <div className="mt-1 text-amber-600 dark:text-amber-400">
+                ⚠ Cold-start — using uniform weights (training in progress)
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ScoreGauge({ value }: { value: number }) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const angle = (180 - (clamped / 100) * 180) * (Math.PI / 180);
+  const cx = 80;
+  const cy = 70;
+  const r = 60;
+  const needleLen = r - 12;
+  const nx = cx + needleLen * Math.cos(angle);
+  const ny = cy - needleLen * Math.sin(angle);
+
+  return (
+    <div className="flex flex-col items-center">
+      <svg width="160" height="90" viewBox="0 0 160 90">
+        <defs>
+          <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ef4444" />
+            <stop offset="40%" stopColor="#eab308" />
+            <stop offset="70%" stopColor="#22c55e" />
+            <stop offset="100%" stopColor="#16a34a" />
+          </linearGradient>
+        </defs>
+        {/* Background arc */}
+        <path
+          d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+          fill="none"
+          stroke="#e5e7eb"
+          strokeWidth="10"
+          strokeLinecap="round"
+          className="dark:stroke-gray-700"
+        />
+        {/* Gradient arc */}
+        <path
+          d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+          fill="none"
+          stroke="url(#gaugeGrad)"
+          strokeWidth="6"
+          strokeLinecap="round"
+          opacity="0.85"
+        />
+        {/* Tick marks */}
+        {[0, 25, 50, 75, 100].map((s) => {
+          const tickAngle = (180 - (s / 100) * 180) * (Math.PI / 180);
+          const tx1 = cx + (r - 10) * Math.cos(tickAngle);
+          const ty1 = cy - (r - 10) * Math.sin(tickAngle);
+          const tx2 = cx + (r - 4) * Math.cos(tickAngle);
+          const ty2 = cy - (r - 4) * Math.sin(tickAngle);
+          return (
+            <line
+              key={s}
+              x1={tx1} y1={ty1} x2={tx2} y2={ty2}
+              stroke="#9ca3af" strokeWidth="1"
+            />
+          );
+        })}
+        {/* Needle */}
+        <line
+          x1={cx} y1={cy} x2={nx} y2={ny}
+          stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round"
+        />
+        {/* Center dot */}
+        <circle cx={cx} cy={cy} r="5" fill="#1e293b" />
+        <circle cx={cx} cy={cy} r="2.5" fill="#f8fafc" />
+        {/* Score in center */}
+        <text x={cx} y={cy + 18} fontSize="14" fontWeight="bold" fill="#1e293b" textAnchor="middle" fontFamily="monospace">
+          {clamped.toFixed(1)}
+        </text>
+      </svg>
     </div>
   );
 }

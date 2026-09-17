@@ -137,9 +137,11 @@ const MACRO_META: Record<string, { label: string; unit: string; type: MacroIndic
   yield_curve_spread: { label: "Yield Curve Spread (10y-13w)", unit: "", type: "market" },
   fed_funds_rate: { label: "Fed Funds Rate", unit: "%", type: "release" },
   real_gdp: { label: "Real GDP", unit: "$B", type: "release" },
+  gdp_growth_yoy: { label: "GDP Growth (YoY)", unit: "%", type: "release" },
   gdp_qoq: { label: "GDP (QoQ)", unit: "%", type: "release" },
   cpi_index: { label: "CPI Index", unit: "", type: "release" },
-  core_cpi_index: { label: "Core CPI YoY", unit: "%", type: "release" },
+  cpi_inflation_yoy: { label: "CPI Inflation (YoY)", unit: "%", type: "release" },
+  core_cpi_index: { label: "Core CPI", unit: "", type: "release" },
   inflation_yoy: { label: "Inflation (YoY)", unit: "%", type: "release" },
   core_inflation_yoy: { label: "Core Inflation (YoY)", unit: "%", type: "release" },
   unemployment_rate: { label: "Unemployment Rate", unit: "%", type: "release" },
@@ -147,6 +149,12 @@ const MACRO_META: Record<string, { label: string; unit: string; type: MacroIndic
   housing_permits: { label: "Housing Permits", unit: "K", type: "release" },
   industrial_production: { label: "Industrial Production", unit: "", type: "release" },
   consumer_sentiment: { label: "Consumer Sentiment", unit: "", type: "release" },
+  capacity_utilization: { label: "Capacity Utilization", unit: "%", type: "release" },
+  exports_growth: { label: "Exports Growth (YoY)", unit: "%", type: "release" },
+  imports_growth: { label: "Imports Growth (YoY)", unit: "%", type: "release" },
+  gdp_deflator_inflation: { label: "GDP Deflator Inflation", unit: "%", type: "release" },
+  gdp_per_capita: { label: "GDP Per Capita", unit: "$", type: "release" },
+  gov_spending_gdp: { label: "Govt Spending (% of GDP)", unit: "%", type: "release" },
 };
 
 export function getMacroIndicators(): MacroIndicator[] {

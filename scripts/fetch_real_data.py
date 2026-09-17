@@ -65,7 +65,7 @@ FRED_SERIES = {
     "UNRATE": "unemployment_rate",
 }
 
-OUT_FILE = Path("/home/z/my-project/src/lib/scoring/seed/real-market-data.json")
+OUT_FILE = Path("src/lib/scoring/seed/real-market-data.json")
 
 def fetch_fred(series_id: str) -> list[tuple[str, float]]:
     """Returns list of (date_str 'YYYY-MM-DD', value)."""
