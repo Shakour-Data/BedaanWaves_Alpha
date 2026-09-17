@@ -27,6 +27,12 @@ for (const s of SEED_TICKERS_DEDUP) {
   SEED_MAP.set(s.ticker, s.name);
 }
 
+export type SeedOptions = {
+  force?: boolean;
+  offset?: number;
+  limit?: number;
+};
+
 export interface SeedResult {
   symbols: number;
   snapshots: number;
@@ -37,22 +43,19 @@ export interface SeedResult {
   elapsedMs: number;
 }
 
-export async function seedIfNeeded(force = false): Promise<SeedResult> {
+export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResult> {
   const t0 = Date.now();
-  const existing = await db.symbol.count();
-  if (existing > 0 && !force) {
-    return {
-      symbols: existing,
-      snapshots: await db.scoreSnapshot.count(),
-      coefficients: await db.coefficient.count(),
-      news: await db.newsItem.count(),
-      trainingRuns: await db.trainingRun.count(),
-      realDataPoints: 0,
-      elapsedMs: Date.now() - t0,
-    };
-  }
+  const force = options.force ?? false;
+  const offset = Number.isFinite(options.offset)
+    ? Math.max(0, Math.floor(options.offset ?? 0))
+    : 0;
+  const hasExplicitLimit = options.limit !== undefined;
+  const limit = hasExplicitLimit && Number.isFinite(options.limit)
+    ? Math.max(0, Math.floor(options.limit as number))
+    : 0;
 
   if (force) {
+    console.log("[seed] FORCE mode: existing seed data will be deleted");
     await db.newsItemSymbol.deleteMany();
     await db.newsItem.deleteMany();
     await db.trainingRun.deleteMany();
@@ -64,15 +67,62 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
     await db.symbol.deleteMany();
   }
 
-  // 1. Load REAL universe (yfinance OHLCV + fundamentals + real macro)
-  const universe = loadRealUniverse();
-  if (!universe) {
+  const fullUniverse = loadRealUniverse();
+  if (!fullUniverse) {
     throw new Error(
       "Real market data file not found. Run scripts/fetch_real_data.py and scripts/fetch_real_macro.py first."
     );
   }
-  const marketReturns = computeMarketReturns(universe);
-  console.log(`[seed] Loaded ${universe.tickers.length} real tickers, ${universe.tradingDays.length} scoring days`);
+
+  const marketReturns = computeMarketReturns(fullUniverse);
+  const requestedTickers = hasExplicitLimit
+    ? fullUniverse.tickers.slice(offset, offset + limit)
+    : fullUniverse.tickers.slice(offset);
+  const selectedTickers: string[] = [];
+  const skippedTickers: string[] = [];
+  for (const ticker of requestedTickers) {
+    if (fullUniverse.walks.has(ticker)) {
+      selectedTickers.push(ticker);
+    } else {
+      skippedTickers.push(ticker);
+    }
+  }
+
+  const universe = {
+    ...fullUniverse,
+    tickers: selectedTickers,
+    walks: new Map(
+      selectedTickers.map((ticker) => [
+        ticker,
+        fullUniverse.walks.get(ticker) as RealTickerWalk,
+      ])
+    ),
+  };
+
+  console.log(
+    `[seed] Batch offset=${offset} limit=${hasExplicitLimit ? limit : "all"} selected=${selectedTickers.length}`
+  );
+  if (skippedTickers.length > 0) {
+    console.log(`[seed] Skipped ${skippedTickers.length} tickers without walk data`);
+  }
+  console.log(
+    `[seed] Loaded ${fullUniverse.tickers.length} real tickers, ${fullUniverse.tradingDays.length} scoring days`
+  );
+  if (hasExplicitLimit) {
+    console.log("[seed] Note: batch scores are normalized within the selected batch");
+  }
+
+  if (selectedTickers.length === 0) {
+    return {
+      symbols: 0,
+      snapshots: 0,
+      coefficients: 0,
+      news: 0,
+      trainingRuns: 0,
+      realDataPoints: 0,
+      elapsedMs: Date.now() - t0,
+    };
+  }
 
   // 2. Persist universe (using real sector/industry/marketCap from yfinance)
   const symbolRows = universe.tickers.map((t) => {
@@ -87,7 +137,11 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
       isEtf: walk.isEtf,
     };
   });
-  await db.symbol.createMany({ data: symbolRows });
+  try {
+    await db.symbol.createMany({ data: symbolRows });
+  } catch {
+    // Ignore duplicates
+  }
 
   // 3. Run V2 scoring day-by-day with walk-forward per-symbol coefficient training
   const allSnapshots: SnapshotRow[] = [];
@@ -109,7 +163,7 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
   const prevPrices: Record<string, number> = {};
 
   const scoringDays = Math.min(SCORING_DAYS, universe.tradingDays.length);
-  console.log(`[seed] Scoring ${scoringDays} days (real data)`);
+  console.log(`[seed] Scoring ${scoringDays} days for batch symbols`);
 
   for (let i = 0; i < scoringDays; i++) {
     const day = generateRealDay(universe, i, marketReturns);
@@ -254,6 +308,9 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
         (p) => p.dayIdx > i - 5
       );
     }
+    if ((i + 1) % 10 === 0 || i === scoringDays - 1) {
+      console.log(`[seed] Day ${i + 1}/${scoringDays} completed`);
+    }
   }
 
   // 4. Train final per-symbol coefficients on ALL available real samples
@@ -310,42 +367,74 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
     });
   }
 
-  // 5. Persist snapshots in chunks
-  const CHUNK = 200;
-  for (let i = 0; i < allSnapshots.length; i += CHUNK) {
-    await db.scoreSnapshot.createMany({
-      data: allSnapshots.slice(i, i + CHUNK),
-    });
+  try {
+    await db.scoreSnapshot.createMany({ data: allSnapshots });
+  } catch {
+    // Ignore duplicates
   }
 
   // 6. Persist coefficients
-  for (let i = 0; i < coefficientRows.length; i += CHUNK) {
-    await db.coefficient.createMany({
-      data: coefficientRows.slice(i, i + CHUNK),
-    });
+  try {
+    await db.coefficient.createMany({ data: coefficientRows });
+  } catch {
+    // Ignore duplicates
   }
 
   // 7. Training runs
-  await db.trainingRun.createMany({ data: trainingRuns });
+  const existingTrainingRuns = await db.trainingRun.findMany({
+    select: { ticker: true, level: true, version: true },
+  });
+  const existingTrainingKeys = new Set(
+    existingTrainingRuns.map((row) => `${row.ticker}:${row.level}:${row.version}`)
+  );
+  const newTrainingRuns = trainingRuns.filter(
+    (row) => !existingTrainingKeys.has(`${row.ticker}:${row.level}:${row.version}`)
+  );
+  const trainingResult = newTrainingRuns.length > 0
+    ? await db.trainingRun.createMany({ data: newTrainingRuns })
+    : { count: 0 };
 
   // 8. News items (real recent market headlines)
   const news = generateRealNews(universe.tradingDays);
+  const selectedTickerSet = new Set(universe.tickers);
+  const existingNews = await db.newsItem.findMany({
+    select: { id: true, headline: true, source: true, publishedAt: true },
+  });
+  const existingNewsByKey = new Map(
+    existingNews.map((item) => [
+      `${item.headline}\u0000${item.source}\u0000${item.publishedAt.toISOString()}`,
+      item.id,
+    ])
+  );
+  let newsCount = 0;
   for (const n of news) {
-    await db.newsItem.create({
-      data: {
-        headline: n.headline,
-        source: n.source,
-        url: n.url,
-        publishedAt: n.publishedAt,
-        sentiment: n.sentiment,
-        severity: n.severity,
-        tickers: {
-          create: n.tickers
-            .filter((t) => universe.tickers.includes(t))
-            .map((t) => ({ ticker: t })),
+    const relatedTickers = n.tickers.filter((ticker) => selectedTickerSet.has(ticker));
+    if (relatedTickers.length === 0) continue;
+    const newsKey = `${n.headline}\u0000${n.source}\u0000${n.publishedAt.toISOString()}`;
+    let newsItemId = existingNewsByKey.get(newsKey);
+    if (!newsItemId) {
+      newsItemId = `news-${hashStr(newsKey).toString(16)}`;
+      await db.newsItem.create({
+        data: {
+          id: newsItemId,
+          headline: n.headline,
+          source: n.source,
+          url: n.url,
+          publishedAt: n.publishedAt,
+          sentiment: n.sentiment,
+          severity: n.severity,
         },
-      },
-    });
+      });
+      existingNewsByKey.set(newsKey, newsItemId);
+    }
+    try {
+      await db.newsItemSymbol.createMany({
+        data: relatedTickers.map((ticker) => ({ newsItemId, ticker })),
+      });
+    } catch {
+      // Ignore duplicates
+    }
+    newsCount += 1;
   }
 
   const realDataPoints = universe.tickers.reduce((sum, t) => {

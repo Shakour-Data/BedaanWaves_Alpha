@@ -98,3 +98,25 @@ scripts/top_500.json
 
 # Build/output logs
 seed.out
+
+# Ad-hoc dev/debug scripts (one-off tooling, not part of app)
+/add_major.py
+/add_more.py
+/add_top100.py
+/build_600.py
+/build_600_v2.py
+/check-coeffs.ts
+/check-db.ts
+/check-snap.ts
+/check-snaps-low.ts
+/check-snaps.ts
+/check-versions.ts
+/check_major.py
+/check_mcap.py
+/check_real_data.py
+/count_universe.py
+/filter_top500.py
+/fix_top_symbols.py
+
+# Generated symbol lists
+scripts/top_symbols.json

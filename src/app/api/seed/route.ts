@@ -4,11 +4,11 @@ import { seedIfNeeded } from "@/lib/scoring/seed/orchestrator";
 
 export async function POST(req: NextRequest) {
   const force = req.nextUrl.searchParams.get("force") === "true";
-  const res = await seedIfNeeded(force);
+  const res = await seedIfNeeded({ force });
   return NextResponse.json({ ok: true, ...res });
 }
 
 export async function GET() {
-  const res = await seedIfNeeded(false);
+  const res = await seedIfNeeded({ force: false });
   return NextResponse.json({ ok: true, ...res });
 }

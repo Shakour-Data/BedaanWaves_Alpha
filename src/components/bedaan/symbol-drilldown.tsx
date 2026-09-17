@@ -78,7 +78,15 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
     queryKey: ["symbol-detail", ticker],
     queryFn: async () => {
       const r = await fetch(`/api/scores/${ticker}`);
-      return r.json();
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.error ?? `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      if (typeof data.overall !== "number") {
+        throw new Error("Malformed symbol detail response");
+      }
+      return data;
     },
     enabled: !!ticker,
   });
@@ -109,11 +117,11 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
                   variant="outline"
                   className="text-[10px]"
                   style={{
-                    color: gradeColor(detail.grade as never),
-                    borderColor: gradeColor(detail.grade as never),
+                    color: gradeColor(effectiveGrade as never),
+                    borderColor: gradeColor(effectiveGrade as never),
                   }}
                 >
-                   {effectiveGrade.replace("_", " ")}
+                  {effectiveGrade.replace("_", " ")}
                 </Badge>
                 {detail.coefficientVersion === "uniform-cold-start" && (
                   <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
@@ -129,7 +137,7 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
                   <span className="text-muted-foreground">Overall:</span>{" "}
                   <span
                     className="font-mono text-base font-bold"
-                    style={{ color: gradeColor(detail.grade as never) }}
+                    style={{ color: gradeColor(effectiveGrade as never) }}
                   >
                     {detail.overall.toFixed(2)}
                   </span>

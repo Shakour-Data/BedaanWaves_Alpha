@@ -160,6 +160,12 @@ export function learnCoefficients(
     vols.length > 0 ? vols.reduce((a, b) => a + b, 0) / vols.length : 0;
   const regime: "calm" | "stressed" = meanVol > 4 ? "stressed" : "calm";
 
+  const dataHash = hashStr(
+    ticker + samples.length + (samples[0]?.forwardReturn ?? 0)
+  ).toString(16);
+  // Deterministic version based on data hash (stable across calls for same data)
+  const version = `${ticker}-${dataHash.slice(0, 8)}-${dataHash.slice(8, 16)}`;
+
   return {
     dimensions: normalize(dimImp),
     sub_dimensions: normalize(subDimImp),
@@ -167,10 +173,8 @@ export function learnCoefficients(
     sub_aspects: normalize(subAspectImp),
     sampleCount: samples.length,
     coldStart,
-    version: `${ticker}-${Date.now().toString(36)}-${(rng() * 1e6 | 0).toString(36)}`,
-    dataHash: hashStr(
-      ticker + samples.length + (samples[0]?.forwardReturn ?? 0)
-    ).toString(16),
+    version,
+    dataHash,
     oosR2,
     oosIc,
     shapTopKeys,
