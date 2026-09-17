@@ -175,9 +175,9 @@ def fetch_ticker_data(tickers: list[str], start: str, end: str) -> dict:
     return {"ohlcv": ohlcv, "infos": infos}
 
 def main():
-    # Fetch ~1 year of history so we have enough for SMA-200 + 5-day forward returns
+    # Fetch ~2.5 years of history so we have enough for SMA-200 + forward returns
     end = datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.now() - timedelta(days=420)).strftime("%Y-%m-%d")
+    start = (datetime.now() - timedelta(days=800)).strftime("%Y-%m-%d")
     print(f"=== BedaanWaves real data fetch ===")
     print(f"Window: {start} → {end}")
 

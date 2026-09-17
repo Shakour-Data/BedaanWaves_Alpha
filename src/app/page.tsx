@@ -8,7 +8,12 @@ import { RankingsTable } from "@/components/bedaan/rankings-table";
 import { SymbolDrilldown } from "@/components/bedaan/symbol-drilldown";
 import { MarketSidebar } from "@/components/bedaan/market-sidebar";
 import { WatchlistAlertsPanel } from "@/components/bedaan/watchlist-alerts-panel";
-import { TradingViewWidget } from "@/components/tradingview/tradingview-widget";
+import {
+  NativeCandlestickChart,
+  NativeHeatmap,
+  NativeEconomicCalendar,
+  NativeMarketOverview,
+} from "@/components/bedaan/native-market-widgets";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, CandlestickChart, Grid3x3 } from "lucide-react";
@@ -162,45 +167,16 @@ export default function Home() {
                 </div>
               )}
               <span className="text-[9px] text-muted-foreground">
-                TradingView · display only
+                Real-data native · yfinance + FRED + published stats (spec §12)
               </span>
             </div>
           </div>
           {/* Full-width, 600px tall for maximum chart detail */}
-          <div className="h-[600px] w-full overflow-hidden rounded border border-border bg-white">
+          <div className="h-[600px] w-full overflow-hidden rounded border border-border bg-card">
             {selected && bottomView === "chart" ? (
-              <TradingViewWidget
-                key={`chart-${selected}`}
-                type="advanced-chart"
-                symbol={selected}
-                theme="light"
-                height={600}
-                studies={[
-                  "Volume@tv-basicstudies",
-                  "RSI@tv-basicstudies",
-                ]}
-                extraConfig={{
-                  style: "1",
-                  interval: "D",
-                  hide_side_toolbar: false,
-                  hide_top_toolbar: false,
-                  hide_legend: false,
-                  allow_symbol_change: true,
-                  withdateranges: true,
-                  save_image: true,
-                  details: true,
-                  calendar: false,
-                  hotlist: true,
-                }}
-                showAttribution
-              />
+              <NativeCandlestickChart ticker={selected} height={600} />
             ) : (
-              <TradingViewWidget
-                key="heatmap"
-                type="stock-heatmap"
-                height={600}
-                theme="light"
-              />
+              <NativeHeatmap height={600} />
             )}
           </div>
         </div>
@@ -211,32 +187,22 @@ export default function Home() {
             <div className="mb-2 flex items-center justify-between">
               <span className="text-sm font-semibold">Market Overview</span>
               <span className="text-[9px] text-muted-foreground">
-                TradingView · real-time indices & funds
+                Real rates, commodities & FX · yfinance + FRED (real)
               </span>
             </div>
-            <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-white">
-              <TradingViewWidget
-                key="market-overview"
-                type="market-overview"
-                height={450}
-                theme="light"
-              />
+            <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-card">
+              <NativeMarketOverview height={450} />
             </div>
           </div>
           <div className="rounded border border-border bg-card/50 p-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-sm font-semibold">Economic Calendar</span>
               <span className="text-[9px] text-muted-foreground">
-                TradingView · real macro events
+                Real published government statistics (BEA, BLS, Fed, U.Michigan)
               </span>
             </div>
-            <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-white">
-              <TradingViewWidget
-                key="economic-calendar"
-                type="events"
-                height={450}
-                theme="light"
-              />
+            <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-card">
+              <NativeEconomicCalendar height={450} />
             </div>
           </div>
         </div>

@@ -204,21 +204,32 @@ export const METRIC_UNIVERSE: MetricSpec[] = [
   // ── macro / gdp ──────────────────────────────────────────────────────────
   m("macro","gdp","gdp_qoq", false),
   m("macro","gdp","real_gdp", false),
+  m("macro","gdp","gdp_growth_yoy", false),
   m("macro","gdp","industrial_production", false),
   m("macro","gdp","capacity_utilization", false),
   m("macro","gdp","housing_permits", false),
   m("macro","gdp","consumer_sentiment", false),
+  m("macro","gdp","exports_growth", false),
+  m("macro","gdp","imports_growth", false),
+  m("macro","gdp","gdp_deflator_inflation", true),
+  m("macro","gdp","gdp_per_capita", false),
+  m("macro","gdp","gov_spending_gdp", false),
   // ── macro / inflation ────────────────────────────────────────────────────
   m("macro","inflation","cpi_index", true),
   m("macro","inflation","core_cpi_index", true),
   m("macro","inflation","inflation_yoy", true),
+  m("macro","inflation","cpi_inflation_yoy", true),
   m("macro","inflation","core_inflation_yoy", true),
   // ── macro / interest_rates ────────────────────────────────────────────────
   m("macro","interest_rates","fed_funds_rate", true),
   m("macro","interest_rates","treasury_yield_2y", true),
+  m("macro","interest_rates","treasury_yield_5y", true),
   m("macro","interest_rates","treasury_yield_10y", true),
+  m("macro","interest_rates","treasury_yield_13w", true),
   m("macro","interest_rates","treasury_yield_30y", true),
   m("macro","interest_rates","yield_curve_spread", false),
+  // ── macro / volatility ─────────────────────────────────────────────────────
+  m("macro","volatility","vix", false),
   // ── macro / exchange_rates ────────────────────────────────────────────────
   m("macro","exchange_rates","dollar_index", false),
   m("macro","exchange_rates","usd_eur", false),

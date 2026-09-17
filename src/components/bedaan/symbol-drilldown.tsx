@@ -28,8 +28,11 @@ import { CoefficientsPanel } from "./coefficients-panel";
 import { DecompositionPanel } from "./decomposition-panel";
 import { PeerComparison } from "./peer-comparison";
 import { TraceModal } from "./trace-modal";
-import { TradingViewWidget } from "@/components/tradingview/tradingview-widget";
-import { DIMENSION_KEYS, DIMENSION_META, TAXONOMY_STATS } from "@/lib/scoring/metric-universe";
+import {
+  NativeCandlestickChart,
+  NativeTechnicalPanel,
+} from "@/components/bedaan/native-market-widgets";
+import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
 import { gradeColor } from "@/lib/scoring/transforms";
 
 interface Props {
@@ -294,60 +297,16 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
             </TabsContent>
             <TabsContent value="tv-chart" className="mt-0">
               <div className="mb-2 text-[10px] text-muted-foreground">
-                <span className="font-semibold">TradingView Advanced Chart (free-tier, display only — spec §12.4).</span>{" "}
-                RSI / SMA / MACD studies pre-loaded. Theme syncs with app.
+                <span className="font-semibold">Spec §12.4:</span> Real candlestick chart (display only).
+                TradingView free-tier embeds are disabled because their data backends are
+                unreachable; this chart renders from real yfinance OHLCV instead.
               </div>
               <div className="h-[420px] w-full overflow-hidden rounded border border-border bg-card">
-                <TradingViewWidget
-                  type="advanced-chart"
-                  symbol={ticker}
-                  theme="light"
-                  height={420}
-                  showAttribution
-                />
+                <NativeCandlestickChart ticker={ticker} height={420} />
               </div>
             </TabsContent>
             <TabsContent value="tv-tech" className="mt-0">
-              <div className="mb-2 text-[10px] text-muted-foreground">
-                <span className="font-semibold">Spec §12.5 — Cross-reference rule:</span> BedaanWaves technical score (left, ML-weighted per-symbol) vs TradingView Technical Rating (right, fixed-weight). Never averaged or merged.
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div className="rounded border border-border bg-card p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-semibold">BedaanWaves Technical Score</span>
-                    {detail && (
-                      <span
-                        className="font-mono text-lg font-bold"
-                        style={{ color: gradeColor(detail.grade as never) }}
-                      >
-                        {detail.dimensionScores.technical?.toFixed(1) ?? "—"}
-                      </span>
-                    )}
-                  </div>
-                  {detail && (
-                    <div className="text-[10px] text-muted-foreground">
-                      ML-weighted, per-symbol coefficient output (learned via{" "}
-                      {TAXONOMY_STATS.subDimensions} sub-dimensions across 4 timeframes).
-                      {detail.coefficientVersion === "uniform-cold-start" ? (
-                        <span className="text-amber-600"> Cold-start: uniform fallback.</span>
-                      ) : (
-                        <span className="text-green-600"> ML-trained weights active.</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="rounded border border-border bg-card p-3">
-                  <div className="mb-2 text-xs font-semibold">TradingView Technical Rating</div>
-                  <div className="h-[200px] w-full">
-                    <TradingViewWidget
-                      type="technical-analysis"
-                      symbol={ticker}
-                      theme="light"
-                      height={200}
-                    />
-                  </div>
-                </div>
-              </div>
+              <NativeTechnicalPanel ticker={ticker} />
             </TabsContent>
           </div>
         </Tabs>

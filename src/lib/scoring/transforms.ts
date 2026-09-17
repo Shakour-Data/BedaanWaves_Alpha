@@ -83,6 +83,42 @@ export function crossSectionalScore(
   return out;
 }
 
+// ─── Time-series percentile → score (for market-wide macro indicators) ───────
+// Macro indicators have the SAME value for all tickers on a given day, so
+// cross-sectional scoring always yields 50. Instead, score each macro indicator
+// based on where its current value sits in its own historical distribution
+// (percentile rank → inverse-normal → 0-100, same transform as cross-sectional).
+// Excludes the current value from the history to avoid self-bias.
+export function timeSeriesScore(
+  currentValue: number | null,
+  history: number[],
+  lowerIsBetter = false
+): number {
+  if (currentValue === null || Number.isNaN(currentValue as number)) return 50.0;
+  if (history.length < 5) return 50.0;
+  // Exclude the current value from history if it's the last point
+  let hist = history;
+  if (history[history.length - 1] === currentValue) {
+    hist = history.slice(0, -1);
+  }
+  if (hist.length < 5) return 50.0;
+  // Check for zero variance (flat / carried-forward data)
+  const minVal = Math.min(...hist);
+  const maxVal = Math.max(...hist);
+  if (maxVal - minVal < 1e-12) return 50.0; // no historical signal
+  // Count values strictly below current
+  let below = 0;
+  for (const v of hist) {
+    if (v < currentValue) below++;
+  }
+  const m = hist.length;
+  let p = (below + 0.5) / m; // midrank percentile
+  if (lowerIsBetter) p = 1.0 - p;
+  p = clamp(p, 1e-6, 1 - 1e-6);
+  const z = invNorm(p);
+  return clamp(50 + 15 * z, 0, 100);
+}
+
 // ─── Pre-transform rules for bounded/binary/scaled indicators (spec §6.1) ──
 export type TechNormRule =
   | { kind: "bounded"; lo: number; hi: number }

@@ -347,8 +347,10 @@ function beta(stockReturns: number[], marketReturns: number[]): number | null {
 
 // ─── Per-day metric builder (real indicators from real candles) ────────────
 export interface DayMetrics {
+  date: string;
   prices: Record<string, { price: number; priceChange: number; volume: number }>;
   macro: Record<string, number>;
+  macroHistory: Record<string, number[]>;
   assetMetrics: Record<string, Record<string, number | null>>;
 }
 
@@ -654,14 +656,23 @@ export function generateRealDay(
   universe: LoadedUniverse,
   dayIdx: number,
   marketReturns: number[]
-): {
-  date: string;
-  prices: Record<string, { price: number; priceChange: number; volume: number }>;
-  macro: Record<string, number>;
-  assetMetrics: Record<string, Record<string, number | null>>;
-} {
+): DayMetrics {
   const dateStr = universe.tradingDays[dayIdx];
   const macro = macroForDay(universe.macro, dateStr);
+
+  // Build macro history: for each indicator, collect all historical values
+  // up to and including the current day. Used for time-series scoring
+  // (market-wide indicators need historical context, not cross-sectional ranking).
+  const macroHistory: Record<string, number[]> = {};
+  for (const [key, points] of Object.entries(universe.macro)) {
+    if (!Array.isArray(points) || points.length === 0) continue;
+    const hist: number[] = [];
+    for (const p of points) {
+      if (p.date <= dateStr) hist.push(p.value);
+    }
+    if (hist.length > 0) macroHistory[key] = hist;
+  }
+
   const assetMetrics: Record<string, Record<string, number | null>> = {};
   const prices: Record<string, { price: number; priceChange: number; volume: number }> = {};
 
@@ -702,7 +713,7 @@ export function generateRealDay(
     assetMetrics[ticker] = m;
   }
 
-  return { date: dateStr, prices, macro, assetMetrics };
+   return { date: dateStr, prices, macro, macroHistory, assetMetrics };
 }
 
 // Compute per-ticker news sentiment for a given day from REAL news articles

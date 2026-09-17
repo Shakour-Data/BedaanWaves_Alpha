@@ -20,6 +20,7 @@ import {
   signalsFor,
   stabilityIndex,
   subAspectScore,
+  timeSeriesScore,
   uniformWeights,
   isValidCoefficients,
 } from "./transforms";
@@ -84,6 +85,7 @@ export interface ScoreMarketInput {
   recentOveralls?: Record<string, number[]>; // ticker → last N overall scores (for stability)
   capturedAt: string;
   prices?: Record<string, { price: number; priceChange: number; volume: number }>;
+  macroHistory?: Record<string, number[]>; // dbField → full historical values up to capturedAt
 }
 
 export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
@@ -92,18 +94,36 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
   const tickers = Object.keys(assetMetrics);
   const n = tickers.length;
 
-  // Step 1 — cross-sectional percentile → Z → score per db_field (NASDAQ peers, same day)
-  const subAspectScoreMap: Record<string, Record<string, number>> = {};
-  for (const ticker of tickers) subAspectScoreMap[ticker] = {};
-  for (const spec of METRIC_UNIVERSE) {
-    const col: (number | null)[] = tickers.map(
-      (t) => assetMetrics[t]?.[spec.dbField] ?? null
-    );
-    const scores = crossSectionalScore(col, spec.lowerIsBetter);
-    for (let i = 0; i < n; i++) {
-      subAspectScoreMap[tickers[i]][spec.subAspect] = scores[i];
-    }
-  }
+   // Step 1 — compute sub-aspect scores per db_field
+   // For macro dimension metrics (market-wide, same value for all tickers),
+   // use time-series scoring instead of cross-sectional (which would always
+   // yield 50 for identical values).
+   const subAspectScoreMap: Record<string, Record<string, number>> = {};
+   for (const ticker of tickers) subAspectScoreMap[ticker] = {};
+   for (const spec of METRIC_UNIVERSE) {
+     if (spec.dim === "macro") {
+       // Time-series scoring: score each ticker's macro value relative to the
+       // indicator's own historical distribution. All tickers share the same
+       // macro value on a given day, but the score reflects how favorable the
+       // current macro environment is historically.
+       const hist = input.macroHistory?.[spec.dbField] ?? [];
+       let score = 50.0;
+       for (let i = 0; i < n; i++) {
+         const val = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
+         score = timeSeriesScore(val, hist, spec.lowerIsBetter);
+         subAspectScoreMap[tickers[i]][spec.subAspect] = score;
+       }
+     } else {
+       // Cross-sectional scoring for per-ticker metrics (fundamental, technical, etc.)
+       const col: (number | null)[] = tickers.map(
+         (t) => assetMetrics[t]?.[spec.dbField] ?? null
+       );
+       const scores = crossSectionalScore(col, spec.lowerIsBetter);
+       for (let i = 0; i < n; i++) {
+         subAspectScoreMap[tickers[i]][spec.subAspect] = scores[i];
+       }
+     }
+   }
 
   const out: HierarchicalScore[] = [];
   for (const ticker of tickers) {

@@ -92,12 +92,7 @@ function buildConfig(props: TVWidgetProps): Record<string, unknown> {
         hotlist: true,
         calendar: false,
         withdateranges: true,
-        studies: props.studies ?? [
-          "RSI@tv-basicstudies",
-          "MASimple@tv-basicstudies",
-          "MACD@tv-basicstudies",
-          "Volume@tv-basicstudies",
-        ],
+        studies: props.studies ?? [],
         ...props.extraConfig,
       };
     case "mini-symbol-overview":

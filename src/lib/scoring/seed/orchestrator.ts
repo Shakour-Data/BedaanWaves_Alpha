@@ -129,6 +129,7 @@ export async function seedIfNeeded(force = false): Promise<SeedResult> {
       capturedAt,
       recentOveralls: recentOverallsByTicker,
       prices: day.prices,
+      macroHistory: day.macroHistory,
     });
 
     for (const s of snapshots) {
