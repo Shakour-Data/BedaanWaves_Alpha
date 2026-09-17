@@ -1,0 +1,736 @@
+     1→     1→# BedaanWaves — Master Algorithmic Specification & Product Blueprint (FINAL)
+     2→     2→
+     3→     3→> **Document Class:** Production Algorithmic Contract
+     4→     4→> **Scope:** NASDAQ-only (~5,600 symbols), fully dynamic, zero static weights, TradingView-integrated UI
+     5→     5→> **Revision:** v4.0 — FINAL — Per-Symbol Coefficients · Advanced ML Pipeline · TradingView Free Widgets · Full UI/UX · Governance & Observability
+     6→     6→> **Status:** Authoritative source of truth for scoring, learning, presentation, and governance layers
+     7→     7→> **Supersedes:** v3.1 and all prior revisions
+     8→     8→
+     9→     9→---
+    10→    10→
+    11→    11→## 0. EXECUTIVE SUMMARY
+    12→    12→
+    13→    13→BedaanWaves is a NASDAQ-exclusive, machine-learned, multi-hierarchy scoring and ranking engine. Every coefficient in the production scoring path is **learned per symbol**, not per market snapshot. The system ingests OHLCV + fundamentals + macro + sentiment + AI signals, transforms them cross-sectionally within the ~5,600-symbol NASDAQ universe, aggregates them across a 4-level hierarchy (6 Dimensions → 44 Sub-Dimensions → 135 Aspects → 173 Sub-Aspects → 865+ Indicators), and produces a 0–100 overall score plus 6 dimension scores per symbol.
+    14→    14→
+    15→    15→The platform exposes this intelligence through a real-time, historically-deep UI featuring:
+    16→    16→- Per-symbol historical score trends (overall + 6 dimensions) with multi-timeframe resolution
+    17→    17→- Radar (spider) visualization of the 6-dimension profile with peer overlays
+    18→    18→- **Embedded TradingView free-tier widgets** (price charts, heatmaps, screeners, calendars)
+    19→    19→- A live rotating market ticker (price / Δ / overall score)
+    20→    20→- A breaking-news ribbon for market-moving events
+    21→    21→- Full NASDAQ universe coverage (~5,600 symbols)
+    22→    22→- Score decomposition, peer comparison, alerts, watchlists, and export
+    23→    23→
+    24→    24→**Hard guarantees:**
+    25→    25→- No hardcoded weights in the production scoring path.
+    26→    26→- No mock, synthetic, or placeholder data — ever.
+    27→    27→- Per-symbol coefficient vectors (not global snapshot coefficients).
+    28→    28→- All historical scores are recomputed from real, validated data — point-in-time correct, no lookahead bias.
+    29→    29→- TradingView widgets used **only** for visualization; all scores remain BedaanWaves-native.
+    30→    30→
+    31→    31→---
+    32→    32→
+    33→    33→## 1. UNIVERSE & DATA SOVEREIGNTY
+    34→    34→
+    35→    35→### 1.1 NASDAQ-Only Mandate
+    36→    36→- Universe: ~5,600 NASDAQ-listed securities (equities + ETFs).
+    37→    37→- Seed source: `database/insert_nasdaq_symbols.sql` (5,569 confirmed records).
+    38→    38→- NYSE, AMEX, OTC, and international listings are **explicitly out of scope**.
+    39→    39→- All cross-sectional ranks, percentiles, and coefficient learning occur **within NASDAQ only**.
+    40→    40→- Data provider: `DATA_PROVIDER=yfinance` (exclusive for scoring). TradingView is **display-only**, never a data source for scoring.
+    41→    41→
+    42→    42→### 1.2 Anti-Mock Policy (Invariant #4)
+    43→    43→- **No mock data is permitted at any layer** — ingestion, transformation, scoring, persistence, or presentation.
+    44→    44→- Every score rendered in the UI must trace to a `raw_performance_scores` row with `is_processed=True` and `data_quality='VALIDATED'`.
+    45→    45→- If a metric is missing: it becomes `50.0` (neutral) at L4 — never fabricated, never zero-filled, never interpolated from mock sources.
+    46→    46→- Historical recomputation must be reproducible from raw candles + fundamentals + macro snapshots.
+    47→    47→- TradingView widgets embed live market data from TradingView's own feed, but **must never** feed back into BedaanWaves scoring.
+    48→    48→- CI guard: any import of `mock`, `faker`, `dummy`, or synthetic generators in `production/` paths fails the build.
+    49→    49→
+    50→    50→### 1.3 Data Governance & Point-in-Time Correctness **(NEW)**
+    51→    51→- **No lookahead bias:** every feature used at time `t` must have been observable at `t`. Fundamentals use `reported_at` timestamps, not `fiscal_period_end`.
+    52→    52→- **Survivorship-bias-free:** delisted symbols remain in historical cross-sections until their delisting date.
+    53→    53→- **Corporate-action adjusted:** all OHLCV adjusted for splits and dividends before indicator computation.
+    54→    54→- **Trading halts:** flagged and excluded from cross-sectional ranking on halt days; last valid score carried forward with staleness flag.
+    55→    55→- **Timezone discipline:** all timestamps stored in UTC; market events normalized to `America/New_York` for cross-sectional grouping.
+    56→    56→- **Data lineage:** every metric value carries `(source, ingested_at, revision)` triple; any correction triggers downstream recomputation.
+    57→    57→- **Data quality tiers:** `VALIDATED` · `PROVISIONAL` · `STALE` · `REJECTED`. Only `VALIDATED` enters training.
+    58→    58→
+    59→    59→---
+    60→    60→
+    61→    61→## 2. HIERARCHICAL TAXONOMY
+    62→    62→
+    63→    63→### 2.1 Four-Level Structure
+    64→    64→
+    65→    65→| Level | Name | Count | Min Indicators / Child |
+    66→    66→|-------|------|-------|------------------------|
+    67→    67→| L1 | Dimensions | 6 | — |
+    68→    68→| L2 | Sub-Dimensions | 44 | — |
+    69→    69→| L3 | Aspects | 135 | — |
+    70→    70→| L4 | Sub-Aspects | 173 | ≥ 5 |
+    71→    71→| — | **Total Indicators** | — | **≥ 865** |
+    72→    72→
+    73→    73→**L1 Dimensions:** `fundamental`, `technical`, `sentiment`, `risk`, `macro`, `ai`
+    74→    74→
+    75→    75→**Canonical source of truth:** `scoring_engine_v2.py → METRIC_UNIVERSE`
+    76→    76→```
+    77→    77→(dim, sub_dim, aspect, sub_aspect, db_field, lower_is_better)
+    78→    78→```
+    79→    79→`hierarchy.py` derives all key tuples and parent maps programmatically from `METRIC_UNIVERSE` — no duplication, no drift.
+    80→    80→
+    81→    81→### 2.2 Per-Dimension Composition
+    82→    82→
+    83→    83→| Dimension | Sub-Dims | Aspects | Sub-Aspects | Indicators |
+    84→    84→|-----------|----------|---------|-------------|------------|
+    85→    85→| fundamental | 9 | 33 | 44 | ≥ 220 |
+    86→    86→| technical | 8 | 50 | 65 | ≥ 325 |
+    87→    87→| sentiment | 2 | 2 | 2 | ≥ 10 |
+    88→    88→| risk | 4 | 13 | 13 | ≥ 65 |
+    89→    89→| macro | 5 | 21 | 21 | ≥ 105 |
+    90→    90→| ai | 3 | 16 | 16 | ≥ 80 |
+    91→    91→| **TOTAL** | **44** | **135** | **173** | **≥ 865** |
+    92→    92→
+    93→    93→### 2.3 Sub-Aspect Granularity (Representative)
+    94→    94→
+    95→    95→**fundamental / valuation (7 sub-aspects × 5 = 35):**
+    96→    96→`pe_ratio`, `pb_ratio`, `ev_ebitda`, `peg_ratio`, `price_to_sales`, `price_to_cash_flow`, `payout_ratio`
+    97→    97→
+    98→    98→**fundamental / profitability (9 × 5 = 45):**
+    99→    99→`roe`, `roa`, `roic`, `profit_margin`, `gross_margin`, `operating_margin`, `net_margin`, `ebitda_margin`, `operating_leverage`
+   100→   100→
+   101→   101→**fundamental / growth (4 × 5 = 20):**
+   102→   102→`revenue_growth`, `eps_growth`, `earnings_growth`, `free_cash_flow_growth`
+   103→   103→
+   104→   104→**fundamental / liquidity (3 × 5 = 15):**
+   105→   105→`current_ratio`, `quick_ratio`, `cash_ratio`
+   106→   106→
+   107→   107→**fundamental / efficiency (3 × 5 = 15):**
+   108→   108→`asset_turnover`, `inventory_turnover`, `receivables_turnover`
+   109→   109→
+   110→   110→**fundamental / solvency (4 × 5 = 20):**
+   111→   111→`debt_to_equity`, `debt_to_assets`, `interest_coverage`, `debt_to_ebitda`
+   112→   112→
+   113→   113→**fundamental / dividend (2 × 5 = 10):**
+   114→   114→`dividend_yield`, `dividend_growth_rate`
+   115→   115→
+   116→   116→**fundamental / cash_flow (4 × 5 = 20):**
+   117→   117→`free_cash_flow_yield`, `operating_cash_flow_ratio`, `capex_ratio`, `cash_conversion_ratio`
+   118→   118→
+   119→   119→**technical / moving_averages (13 × 5 = 65):**
+   120→   120→`sma_20_distance`, `sma_50_distance`, `sma_200_distance`, `ema_12_distance`, `ema_26_distance`, `ema_50_distance`, `wma_10_distance`, `wma_20_distance`, `dema_20_distance`, `tema_20_distance`, `t3_20_distance`, `hull_20_distance`, `vwma_20_distance`
+   121→   121→
+   122→   122→**technical / momentum (12 × 5 = 60):**
+   123→   123→`rsi_14`, `macd_histogram`, `stoch_k`, `kdj_j`, `cci_20`, `williams_r`, `roc_12`, `trix_15`, `stoch_rsi_k`, `fisher_transform`, `awesome_oscillator`, `ultimate_oscillator`
+   124→   124→
+   125→   125→**technical / volatility (8 × 5 = 40):**
+   126→   126→`bb_percent_b`, `atr_ratio`, `kama_10_distance`, `donchian_position`, `stddev_20`, `variance_20`, `keltner_position`, `mass_index`
+   127→   127→
+   128→   128→**technical / trend (6 × 5 = 30):**
+   129→   129→`adx_14`, `ichimoku_score`, `parabolic_sar_signal`, `aroon_oscillator`, `supertrend_signal`, `elder_ray_index`
+   130→   130→
+   131→   131→**technical / volume (9 × 5 = 45):**
+   132→   132→`obv_slope`, `cmf_20`, `ad_line_slope`, `vpt_slope`, `mfi_14`, `ease_of_movement`, `chaikin_oscillator`, `force_index`, `vwap_distance`
+   133→   133→
+   134→   134→**technical / support_resistance (2 × 5 = 10):**
+   135→   135→`pivot_position`, `fibonacci_position`
+   136→   136→
+   137→   137→**sentiment / news (2 × 5 = 10):**
+   138→   138→`news_sentiment_avg`, `news_volume`
+   139→   139→
+   140→   140→**risk / market_risk (8 × 5 = 40):**
+   141→   141→`volatility_z`, `max_drawdown`, `var_95`, `var_99`, `cvar_95`, `sharpe_ratio`, `sortino_ratio`, `beta`
+   142→   142→
+   143→   143→**risk / credit_risk (2 × 5 = 10):**
+   144→   144→`default_prob`, `credit_spread`
+   145→   145→
+   146→   146→**risk / liquidity_risk (2 × 5 = 10):**
+   147→   147→`bid_ask_spread`, `volume_ratio`
+   148→   148→
+   149→   149→**risk / operational_risk (1 × 5 = 5):**
+   150→   150→`risk_score`
+   151→   151→
+   152→   152→**macro / gdp (6 × 5 = 30):**
+   153→   153→`gdp_qoq`, `real_gdp`, `industrial_production`, `capacity_utilization`, `housing_permits`, `consumer_sentiment`
+   154→   154→
+   155→   155→**macro / inflation (4 × 5 = 20):**
+   156→   156→`cpi_index`, `core_cpi_index`, `inflation_yoy`, `core_inflation_yoy`
+   157→   157→
+   158→   158→**macro / interest_rates (5 × 5 = 25):**
+   159→   159→`fed_funds_rate`, `treasury_yield_2y`, `treasury_yield_10y`, `treasury_yield_30y`, `yield_curve_spread`
+   160→   160→
+   161→   161→**macro / exchange_rates (4 × 5 = 20):**
+   162→   162→`dollar_index`, `usd_eur`, `usd_gbp`, `usd_jpy`
+   163→   163→
+   164→   164→**macro / commodity_prices (2 × 5 = 10):**
+   165→   165→`oil_price`, `gold_price`
+   166→   166→
+   167→   167→**ai / ml_signal (8 × 5 = 40):**
+   168→   168→`expected_return`, `confidence`, `expected_volatility`, `signal_risk_score`, `model_confidence`, `win_rate`, `ml_rsi`, `ml_macd`
+   169→   169→
+   170→   170→**ai / pattern_recognition (5 × 5 = 25):**
+   171→   171→`pattern_confidence`, `pattern_probability`, `pattern_reliability`, `pattern_type`, `pattern_horizon`
+   172→   172→
+   173→   173→**ai / anomaly_detection (3 × 5 = 15):**
+   174→   174→`anomaly_z_score`, `anomaly_persistence`, `anomaly_confidence`
+   175→   175→
+   176→   176→> Full enumeration is maintained exclusively in `METRIC_UNIVERSE`; this document defers to it.
+   177→   177→
+   178→   178→### 2.4 Multi-Timeframe Aggregation **(NEW)**
+   179→   179→Each technical sub-aspect is computed across **four timeframes**: intraday (1H), daily (D), weekly (W), monthly (M). Timeframe weights are **learned per symbol per sub-aspect**, not fixed. This yields:
+   180→   180→- `technical_intraday_score`, `technical_daily_score`, `technical_weekly_score`, `technical_monthly_score`
+   181→   181→- Final `technical` dimension = learned weighted blend across timeframes.
+   182→   182→
+   183→   183→---
+   184→   184→
+   185→   185→## 3. ZERO STATIC WEIGHTS — PER-SYMBOL LEARNING
+   186→   186→
+   187→   187→### 3.1 Core Principle
+   188→   188→> **Every coefficient at every level is learned independently per symbol.**
+   189→   189→
+   190→   190→This is a **critical correction** over prior global-snapshot coefficient designs. At any given moment, symbol `AAPL` and symbol `NVDA` carry **different** coefficient vectors at L1, L2, L3, and L4 — because their historical score → return relationships differ.
+   191→   191→
+   192→   192→There are **no** market-wide coefficient snapshots in the production scoring path. Cold-start fallbacks (uniform `1/n`) are permitted only until per-symbol training data reaches `min_samples_for_training = 50`, and are always logged and auto-replaced.
+   193→   193→
+   194→   194→### 3.2 Coefficient Store Schema (Per-Symbol)
+   195→   195→
+   196→   196→```
+   197→   197→coefficient_store/
+   198→   198→├── {symbol}/
+   199→   199→│   ├── dimensions_model.joblib
+   200→   200→│   ├── dimensions_scaler.joblib
+   201→   201→│   ├── dimensions_coefficients.json
+   202→   202→│   ├── sub_dimensions_model.joblib
+   203→   203→│   ├── sub_dimensions_scaler.joblib
+   204→   204→│   ├── sub_dimensions_coefficients.json
+   205→   205→│   ├── aspects_model.joblib
+   206→   206→│   ├── aspects_scaler.joblib
+   207→   207→│   ├── aspects_coefficients.json
+   208→   208→│   ├── sub_aspects_model.joblib
+   209→   209→│   ├── sub_aspects_scaler.joblib
+   210→   210→│   ├── sub_aspects_coefficients.json
+   211→   211→│   ├── timeframe_weights.json
+   212→   212→│   └── meta.json  # trained_at, sample_count, version, data_hash, shap_summary, drift_status
+   213→   213→```
+   214→   214→
+   215→   215→Each `*.json` satisfies: all values ∈ [0, 1], sum = 1.0 ± 1e-6, no negatives.
+   216→   216→
+   217→   217→### 3.3 Global Aggregation (Reporting Only)
+   218→   218→A **global** coefficient vector may be computed for analytics/dashboards, but it is **never** used in `score_market()` or any production scoring path.
+   219→   219→
+   220→   220→---
+   221→   221→
+   222→   222→## 4. LEARNING PIPELINE (Advanced)
+   223→   223→
+   224→   224→### 4.1 Training Data
+   225→   225→Source: `raw_performance_scores`
+   226→   226→Filter: `is_processed = True AND data_quality = 'VALIDATED'`
+   227→   227→Max per training run: 5,000 most recent records **per symbol**.
+   228→   228→Fields consumed: `dimension_scores`, `sub_dimension_scores`, `aspect_scores`, `sub_aspect_scores`, `target_return`, `target_volatility`, `target_price_change`, `captured_at`.
+   229→   229→
+   230→   230→### 4.2 Feature Engineering (50-Dim Vector, Per Sample)
+   231→   231→- **Score stats (×4 levels):** 28 dims — mean, std, median, min, max, positive count, negative count
+   232→   232→- **Temporal:** 5 dims — weekday, month, day, hour, is_weekend
+   233→   233→- **Market context:** 4 dims — volatility, volume, price_change, market_cap
+   234→   234→- **Padding:** zero-pad to fixed length 50
+   235→   235→
+   236→   236→### 4.3 Per-Symbol, Per-Level Model Training
+   237→   237→For each `symbol ∈ NASDAQ` and each `level ∈ {dimensions, sub_dimensions, aspects, sub_aspects}`:
+   238→   238→1. `X` ← feature matrix `(n_samples, 50)`
+   239→   239→2. `y[i, k] = (|score[i][k]| / Σ_k |score[i][k]|) * target_return[i]`
+   240→   240→3. `StandardScaler` on `X`
+   241→   241→4. **Ensemble:** `RandomForestRegressor` + `GradientBoostingRegressor` + `HistGradientBoostingRegressor`, stacked via out-of-fold predictions
+   242→   242→5. **Purged walk-forward cross-validation** with embargo (López de Prado, 2018) — prevents leakage from overlapping labels
+   243→   243→6. Extract `feature_importances_` (RF) + `SHAP` mean |values| (GBM) → blended importance → map to key names → normalize to sum = 1.0
+   244→   244→
+   245→   245→### 4.4 Coefficient Normalization Contract
+   246→   246→- All values ∈ [0, 1]
+   247→   247→- Sum = 1.0 (rounding error distributed to largest weight)
+   248→   248→- No negative values, no values > 1
+   249→   249→- All-zero → uniform `1/n` (cold-start only, logged)
+   250→   250→
+   251→   251→### 4.5 Cadence & Persistence
+   252→   252→- `retrain_interval_hours = 24`
+   253→   253→- `min_samples_for_training = 50` (per symbol)
+   254→   254→- `validation_split = 0.2` (plus purged walk-forward CV)
+   255→   255→- History cap: 1,000 most recent samples per symbol
+   256→   256→- Persistence: `joblib` + JSON per symbol (see §3.2)
+   257→   257→- Hot-swap: newly trained coefficients take effect on the next scoring cycle, no restart
+   258→   258→- **Model registry:** every coefficient version stored with `version_id`, `trained_at`, `metrics` (OOS R², IC, Sharpe of predicted portfolio), `data_hash`
+   259→   259→
+   260→   260→### 4.6 Drift Detection & Auto-Retraining Trigger **(NEW)**
+   261→   261→- Population Stability Index (PSI) on feature distribution > 0.25 → drift alert
+   262→   262→- Kolmogorov–Smirnov test on prediction distribution vs training → drift alert
+   263→   263→- Rolling out-of-sample IC degradation > 30% → forced retrain
+   264→   264→- Regime change detected via Hidden Markov Model (2-state: calm / stressed) → regime-specific re-weighting triggered
+   265→   265→
+   266→   266→### 4.7 Meta-Labeling **(NEW)**
+   267→   267→Primary model predicts direction; secondary model (meta-labeler) predicts probability that the primary is correct. Meta-label probability is stored as `confidence` at the AI dimension and used to **down-weight** low-confidence predictions during aggregation.
+   268→   268→
+   269→   269→---
+   270→   270→
+   271→   271→## 5. SCORING ALGORITHM (V2 ENGINE)
+   272→   272→
+   273→   273→### 5.1 Dynamic Weight Resolution
+   274→   274→```python
+   275→   275→def _get_dynamic_weights(symbol, level):
+   276→   276→    if _use_ml_coefficients and coefficient_service.is_model_trained(symbol, level):
+   277→   277→        w = coefficient_service.get_coefficients(symbol, level)
+   278→   278→        if validate(w) and abs(sum(w.values()) - 1.0) <= 1e-6:
+   279→   279→            return w                       # per-symbol, ML-learned
+   280→   280→    return uniform_fallback(level)         # cold-start ONLY, logged
+   281→   281→```
+   282→   282→
+   283→   283→### 5.2 `score_market(asset_metrics)` — Step-by-Step
+   284→   284→
+   285→   285→**Input:** `asset_metrics: dict[asset_id, dict[db_field, float | None]]`
+   286→   286→
+   287→   287→**Step 1 — Cross-Sectional Percentile → Z → Score (NASDAQ peers, same day)**
+   288→   288→For each `db_field` across all NASDAQ assets:
+   289→   289→1. Collect values; `None` passes through unchanged.
+   290→   290→2. Compute midrank (average rank for ties).
+   291→   291→3. `p = (rank - 0.5) / n`
+   292→   292→4. If `lower_is_better`: `p = 1.0 - p`
+   293→   293→5. Clip `p` to `[1e-6, 1 - 1e-6]`
+   294→   294→6. `z = Φ⁻¹(p)` (SciPy if available, else Abramowitz–Stegun)
+   295→   295→7. `score = clamp(50 + 15·z, 0, 100)`
+   296→   296→
+   297→   297→**Step 2 — Coverage**
+   298→   298→`coverage = (# present metrics) / |METRIC_UNIVERSE|`
+   299→   299→
+   300→   300→**Step 3 — L4 (Sub-Aspects)**
+   301→   301→Store transformed score directly. Missing → `50.0` neutral (never 0).
+   302→   302→
+   303→   303→**Step 4 — L3 (Aspects) — per-symbol dynamic**
+   304→   304→```
+   305→   305→aspect_score[asp] = Σ_{sa ∈ asp} sub_aspect_score[sa] · w_symbol[sa]
+   306→   306→                    ─────────────────────────────────────────────
+   307→   307→                          Σ_{sa ∈ asp} w_symbol[sa]
+   308→   308→```
+   309→   309→
+   310→   310→**Step 5 — L2 (Sub-Dimensions) — per-symbol dynamic**
+   311→   311→`sub_dimension_score[sub] = coverage_weighted_mean(aspect_scores ∈ sub, w_symbol["sub_dimensions"])`
+   312→   312→
+   313→   313→**Step 6 — L1 (Dimensions) — per-symbol dynamic**
+   314→   314→`dimension_score[dim] = coverage_weighted_mean(sub_dimension_scores ∈ dim, w_symbol["dimensions"])`
+   315→   315→
+   316→   316→**Step 7 — Overall — per-symbol dynamic**
+   317→   317→```
+   318→   318→overall = Σ_dim dimension_score[dim] · w_symbol[dim]
+   319→   319→overall = clamp(overall, 0, 100)
+   320→   320→```
+   321→   321→> `DIMENSION_WEIGHTS` constant is **NOT** referenced. Only `w_symbol["dimensions"]`.
+   322→   322→
+   323→   323→**Step 8 — Grade & Signals**
+   324→   324→| Score | Grade |
+   325→   325→|-------|-------|
+   326→   326→| ≥ 85 | STRONG_BULLISH |
+   327→   327→| ≥ 70 | BULLISH |
+   328→   328→| ≥ 55 | NEUTRAL |
+   329→   329→| ≥ 40 | BEARISH |
+   330→   330→| < 40 | STRONG_BEARISH |
+   331→   331→
+   332→   332→Signals: `strong_{dim}` if ≥ 80 · `positive_{dim}` if ≥ 60 · `weak_{dim}` if ≤ 20
+   333→   333→
+   334→   334→**Step 9 — Uncertainty & Stability (NEW)**
+   335→   335→- **Conformal prediction interval:** 90% CI on overall score via split-conformal calibration.
+   336→   336→- **Score stability index:** rolling 5-day std of overall score; low std = stable signal.
+   337→   337→- **Circuit breaker:** if |Δscore| > 25 in one day without a corresponding price move > 15%, flag for manual review; do not silently propagate.
+   338→   338→
+   339→   339→**Output:** `HierarchicalScore` dataclass (all 4 levels + overall + grade + signals + coverage + CI + stability index).
+   340→   340→
+   341→   341→---
+   342→   342→
+   343→   343→## 6. TECHNICAL NORMALIZATION & BUNDLE SCORING
+   344→   344→
+   345→   345→### 6.1 Pre-Transform Rules
+   346→   346→| Category | Examples | Normalization |
+   347→   347→|----------|----------|---------------|
+   348→   348→| Bounded | `rsi_14`, `stoch_k`, `mfi_14` | `clamp(v, 0, 100)` |
+   349→   349→| Binary | `parabolic_sar_signal`, `ichimoku_score` | 75 if >0, 25 if <0, 50 if =0 |
+   350→   350→| Lower-is-better | `atr_ratio`, `stddev_20` | `clamp(50 − 25·tanh(|v|/scale))` |
+   351→   351→| Scaled | `macd_histogram`, `roc_12` | `clamp(50 + 25·tanh(v/scale))` |
+   352→   352→
+   353→   353→Scale factors live in `_TECHNICAL_SCALES` (e.g., `adx_14 → 40.0`, `mass_index → 25.0`).
+   354→   354→
+   355→   355→### 6.2 `score_technical_bundle(...)`
+   356→   356→1. Flatten to `TECHNICAL_METRIC_FIELDS` (50 canonical fields).
+   357→   357→2. Normalize each via `normalize_indicator_score`.
+   358→   358→3. Regime-adaptive weights (learned **per symbol, per sub-dimension**):
+   359→   359→   - `trend_factor = clamp(adx/40, 0, 1)`
+   360→   360→   - `volatility_factor = clamp(volatility/0.50, 0, 1)`
+   361→   361→   - Boost trend in strong trends; volume/volatility in high vol.
+   362→   362→4. Base score = weighted mean using **per-symbol** sub-dimension coefficients.
+   363→   363→5. Confluence bonus: rewards indicator agreement, ±10 max.
+   364→   364→6. Divergence: +3 bullish, −3 bearish.
+   365→   365→7. Final: `0.7·base + 0.3·confluence`.
+   366→   366→
+   367→   367→---
+   368→   368→
+   369→   369→## 7. AI DIMENSION
+   370→   370→
+   371→   371→### 7.1 Composite
+   372→   372→```
+   373→   373→AI_Score = ML_Predictions(w1) + Pattern_Recognition(w2) + Anomaly_Detection(w3)
+   374→   374→```
+   375→   375→Weights `w1, w2, w3` are **learned per symbol, per regime**:
+   376→   376→| Regime | Adjustment |
+   377→   377→|--------|------------|
+   378→   378→| Bull | `pattern_recognition × 1.15` |
+   379→   379→| Bear | `anomaly_detection × 1.20` |
+   380→   380→| High Volatility | `ml_predictions × 1.10` |
+   381→   381→| Sideways | cold-start balanced (logged) |
+   382→   382→
+   383→   383→Weights renormalized to sum = 1.0.
+   384→   384→
+   385→   385→### 7.2 ML Predictions
+   386→   386→```
+   387→   387→ml_score = 0.30·return_score + 0.25·confidence_score
+   388→   388→         + 0.20·(100 − risk_score) + 0.15·win_rate_score + 0.10·model_confidence
+   389→   389→```
+   390→   390→- `return_score = 100·sigmoid(return_pct·50) − volatility_penalty`
+   391→   391→- Confidence penalty: if `confidence < 65`, multiply by `(confidence/65)²`
+   392→   392→- Technical alignment bonus: +5 for RSI/MACD alignment
+   393→   393→
+   394→   394→### 7.3 Pattern Recognition
+   395→   395→```
+   396→   396→pattern_score = Σ (prob · reliability · pattern_weight) / Σ pattern_weight
+   397→   397→```
+   398→   398→Pattern weights: reversal 1.2× · continuation 1.0× · candlestick 0.8× · anomaly 1.1×
+   399→   399→Confluence: +5 for 2+ aligned · +10 for 3+ · +8 multi-timeframe
+   400→   400→
+   401→   401→### 7.4 Anomaly Detection
+   402→   402→```
+   403→   403→anomaly_score = 0.40·severity + 0.30·persistence + 0.20·(100 − market_impact) + 0.10·confidence
+   404→   404→```
+   405→   405→- `severity = min(100, |z|·20)` (cap ±5σ)
+   406→   406→- If not anomaly: pull toward `50 + (score − 50)·0.5`
+   407→   407→
+   408→   408→### 7.5 Coverage & Staleness
+   409→   409→- Coverage < 50% → `score = 50 + (score − 50)·coverage·2.0`
+   410→   410→- Staleness > 5 trading days → `× 0.80`
+   411→   411→
+   412→   412→---
+   413→   413→
+   414→   414→## 8. MACRO SCORING
+   415→   415→FRED/BLS indicators → 0–100 health sub-scores for 5 macro sub-dimensions (GDP, inflation, interest rates, FX, commodities). The relative weights of these 5 sub-dimensions within `macro` are **learned per symbol** — because a growth stock and a value stock respond differently to rate shocks.
+   416→   416→
+   417→   417→---
+   418→   418→
+   419→   419→## 9. END-TO-END DATA FLOW
+   420→   420→
+   421→   421→```
+   422→   422→NASDAQ OHLCV (~5,600 symbols, yfinance only)
+   423→   423→        ↓
+   424→   424→Corporate-action adjustment + point-in-time alignment
+   425→   425→        ↓
+   426→   426→compute_all_indicators()  → 50 technical indicators × 4 timeframes / asset
+   427→   427→        ↓
+   428→   428→flatten_technical_indicators()  → TECHNICAL_METRIC_FIELDS
+   429→   429→        ↓
+   430→   430→score_market()  [V2 engine — cross-sectional over NASDAQ universe]
+   431→   431→   ├─ percentile-rank transform (NASDAQ peers only, same day)
+   432→   432→   ├─ L4 → L3 → L2 → L1 → overall
+   433→   433→   │   (ALL using per-symbol learned_coefficients[symbol][level])
+   434→   434→   ├─ grade + signals + conformal CI + stability index
+   435→   435→   └─ HierarchicalScore dataclass
+   436→   436→        ↓
+   437→   437→Persistence: raw_performance_scores  → training corpus (per symbol)
+   438→   438→        ↓
+   439→   439→CoefficientLearningService.retrain_all()  (daily, per symbol)
+   440→   440→   ├─ drift detection → forced retrain if needed
+   441→   441→   ├─ purged walk-forward CV
+   442→   442→   ├─ ensemble stacking + SHAP
+   443→   443→   └─ model registry versioning
+   444→   444→        ↓
+   445→   445→Hot-swap per-symbol coefficients (no restart)
+   446→   446→        ↓
+   447→   447→RankingService
+   448→   448→   ├─ get_nasdaq_rankings()          — paginated ranked list
+   449→   449→   ├─ get_score_history(symbol)      — time-series (overall + 6 dims, multi-timeframe)
+   450→   450→   ├─ get_hierarchy_scores(symbol)   — full 4-level tree
+   451→   451→   ├─ get_coefficients(symbol)       — per-symbol learned weights
+   452→   452→   ├─ get_radar_profile(symbol)      — 6-dimension vector for spider chart
+   453→   453→   ├─ get_decomposition(symbol)      — waterfall of score contributions
+   454→   454→   └─ get_peer_comparison(symbol)    — vs sector / NASDAQ median
+   455→   455→        ↓
+   456→   456→UI Layer
+   457→   457→   ├─ BedaanWaves-native panels (scores, trends, radar, coefficients, decomposition)
+   458→   458→   └─ TradingView embedded widgets (price charts + free market tools)  ← display-only
+   459→   459→```
+   460→   460→
+   461→   461→---
+   462→   462→
+   463→   463→## 10. COLD-START BEHAVIOR
+   464→   464→When `samples < 50` **for that symbol**:
+   465→   465→- Use uniform `1/n` per key at every level for that symbol only.
+   466→   466→- Log: `{"event": "weights_fallback_to_static", "symbol": "...", "level": "...", "reason": "ml_not_trained"}`
+   467→   467→- Auto-replace as soon as 50+ validated records exist for that symbol.
+   468→   468→- UI badge: "Training in progress — using neutral weights (N/50 samples)".
+   469→   469→
+   470→   470→---
+   471→   471→
+   472→   472→## 11. UI / UX SPECIFICATION
+   473→   473→
+   474→   474→### 11.1 Symbol Drilldown — Historical Score Panel **(Req #1)**
+   475→   475→**Trigger:** Click any symbol in the right-hand rankings list.
+   476→   476→**Panel must display:**
+   477→   477→1. **Overall score trend** — line chart, time axis spanning available history (daily granularity; intraday if available).
+   478→   478→2. **Six dimension trends** — `fundamental`, `technical`, `sentiment`, `risk`, `macro`, `ai` — overlaid with distinct colors + legend toggles.
+   479→   479→3. **Hover tooltip:** exact score, date, grade, conformal CI, and per-dimension breakdown at that timestamp.
+   480→   480→4. **Time-range selector:** 1D · 1W · 1M · 3M · 6M · 1Y · YTD · MAX.
+   481→   481→5. **Data provenance badge:** "Real data — N validated records" with link to `raw_performance_scores` lineage.
+   482→   482→6. **No gaps filled with mock data** — if history is short, show only real points and label "insufficient history".
+   483→   483→7. **Candlestick overlay toggle:** overlay BedaanWaves score line on BedaanWaves-native price candles (from yfinance).
+   484→   484→
+   485→   485→### 11.2 Radar / Spider Chart **(Req #3)**
+   486→   486→- **6-axis radar** (one per L1 dimension) rendered for the selected symbol.
+   487→   487→- **Overlay:** current profile vs. 30-day-ago profile vs. NASDAQ median profile vs. sector median.
+   488→   488→- **Axis scale:** 0–100 (fixed).
+   489→   489→- **Interactive:** hover on vertex shows dimension score + top-3 contributing sub-dimensions.
+   490→   490→- **Placement:** alongside the historical trend panel in the drilldown view.
+   491→   491→- **Animation:** radar morphs as user scrubs the time-range slider.
+   492→   492→
+   493→   493→### 11.3 Per-Symbol Dynamic Coefficients **(Req #2 — architectural)**
+   494→   494→- Coefficient panel in drilldown shows **this symbol's** learned weights at L1 (6 bars) and a drilldown into L2/L3/L4.
+   495→   495→- Each bar labeled with `learned_at` timestamp and `sample_count`.
+   496→   496→- If in cold-start: grey badge "uniform fallback (training in progress)".
+   497→   497→- **Compare coefficients view:** diff `AAPL` vs `NVDA` weights at any level to confirm per-symbol divergence.
+   498→   498→
+   499→   499→### 11.4 Top News Ribbon **(Req #5)**
+   500→   500→- Sticky bar at the very top of the page.
+   501→   501→- Sources: curated market-moving news (earnings surprises, Fed decisions, CPI prints, M&A, halts).
+   502→   502→- Each item: headline · source · timestamp · sentiment tag (bullish/bearish/neutral) · affected NASDAQ tickers.
+   503→   503→- Auto-scroll with pause-on-hover; click expands detail drawer.
+   504→   504→- Color-coded severity: red (critical) · amber (notable) · grey (informational).
+   505→   505→
+   506→   506→### 11.5 Rotating Market Ticker **(Req #6)**
+   507→   507→- Horizontal infinite-scroll marquee, sticky beneath the news ribbon.
+   508→   508→- Per symbol: `SYMBOL  $PRICE  Δ%  Score: NN (GRADE)` with green/red direction coloring.
+   509→   509→- Data source: live quotes (`yfinance`) + latest per-symbol overall score from the scoring engine.
+   510→   510→- Click any ticker → jump to that symbol's drilldown.
+   511→   511→- Configurable speed; respects `prefers-reduced-motion`.
+   512→   512→
+   513→   513→### 11.6 Full NASDAQ Coverage **(Req #7)**
+   514→   514→- All ~5,600 NASDAQ symbols are searchable, rankable, and drilldown-able.
+   515→   515→- Pagination + virtual scrolling for the rankings table.
+   516→   516→- Search: fuzzy ticker/name matching, sector filters, score-range filters, grade filters, market-cap filters.
+   517→   517→- Cold-start symbols display a "training in progress" indicator — but are **never** hidden and **never** shown with fabricated data.
+   518→   518→
+   519→   519→### 11.7 Real-Data Verification Surface **(Req #4 — UI support)**
+   520→   520→- Every score cell exposes a "trace" icon → modal showing:
+   521→   521→  - Source records (`raw_performance_scores.id` list)
+   522→   522→  - `data_quality` flag
+   523→   523→  - `captured_at` timestamps
+   524→   524→  - Coefficient version used (`meta.json` hash)
+   525→   525→- A global status widget: "All displayed scores derive from N validated records. 0 mock records detected."
+   526→   526→
+   527→   527→### 11.8 Score Decomposition Waterfall **(NEW)**
+   528→   528→- Visual breakdown of how each of the 6 dimensions contributes to the overall score.
+   529→   529→- Drill-down: dimension → sub-dimension → aspect → sub-aspect → indicator.
+   530→   530→- Each bar shows: raw score, coefficient, contribution = `score × coefficient`.
+   531→   531→- Helps users understand "why is this stock 72 instead of 85?".
+   532→   532→
+   533→   533→### 11.9 Peer Comparison View **(NEW)**
+   534→   534→- Side-by-side table: selected symbol vs. 5 nearest peers (by sector + market cap).
+   535→   535→- Metrics compared: overall score, 6 dimensions, key ratios, growth rates.
+   536→   536→- Percentile rank within peer group displayed.
+   537→   537→- Visual: grouped bar chart + radar overlay.
+   538→   538→
+   539→   539→### 11.10 Watchlists & Alerts **(NEW)**
+   540→   540→- User can create watchlists (localStorage for anon, DB for logged-in).
+   541→   541→- Alerts: "notify me when AAPL overall score crosses 80" or "when technical dimension drops below 40".
+   542→   542→- Alert delivery: in-app toast + optional email.
+   543→   543→- Alert rules stored per user, evaluated on each scoring cycle.
+   544→   544→
+   545→   545→### 11.11 Export & Sharing **(NEW)**
+   546→   546→- Export rankings to CSV, JSON, or PDF.
+   547→   547→- Share deep link to any drilldown state (symbol + time range + overlays).
+   548→   548→- Embed mode: `<iframe>` for external sites showing a single symbol's BedaanWaves score card.
+   549→   549→
+   550→   550→### 11.12 Mobile Responsiveness **(NEW)**
+   551→   551→- All panels responsive down to 375px width.
+   552→   552→- TradingView widgets auto-resize.
+   553→   553→- Radar chart scales; trends chart switches to vertical scroll.
+   554→   554→- Bottom navigation for Rankings / Watchlist / News / Macro.
+   555→   555→
+   556→   556→---
+   557→   557→
+   558→   558→## 12. TRADINGVIEW INTEGRATION (Free Tier Widgets — Display Only)
+   559→   559→
+   560→   560→### 12.1 Integration Principle
+   561→   561→TradingView is used **exclusively for visualization**. It is never a scoring input, never a training input, and never a substitute for BedaanWaves-native charts. All TradingView widgets are embedded via the official free `tv.js` / `embed-widget-*.js` libraries and require **no paid subscription**.
+   562→   562→
+   563→   563→### 12.2 Embedded TradingView Widgets (Free Tier)
+   564→   564→
+   565→   565→| # | Widget | Purpose | Placement |
+   566→   566→|---|--------|---------|-----------|
+   567→   567→| 1 | **Advanced Chart** (`embed-widget-advanced-chart.js`) | Full interactive candlestick chart with user-configurable indicators | Symbol drilldown — primary price chart tab |
+   568→   568→| 2 | **Mini Chart** (`embed-widget-mini-symbol-overview.js`) | Compact sparkline for each row | Rankings table — inline preview on hover |
+   569→   569→| 3 | **Symbol Overview** (`embed-widget-symbol-overview.js`) | Multi-symbol overview strip | Drilldown header |
+   570→   570→| 4 | **Technical Analysis** (`embed-widget-technical-analysis.js`) | TradingView's own buy/sell/neutral gauge | Drilldown sidebar — shown **adjacent to** BedaanWaves technical score (cross-reference only, never merged) |
+   571→   571→| 5 | **Ticker Tape** (`embed-widget-ticker-tape.js`) | Alternative rotating ticker | Top bar — used only if BedaanWaves-native ticker (§11.5) is disabled |
+   572→   572→| 6 | **Market Overview** (`embed-widget-market-overview.js`) | NASDAQ index + sector mini-quotes | Homepage sidebar |
+   573→   573→| 7 | **Stock Screener** (`embed-widget-screener.js`) | TradingView screener (visual only) | Separate "TV Screener" tab |
+   574→   574→| 8 | **Economic Calendar** (`embed-widget-events.js`) | Macro events (CPI, FOMC, NFP) | Macro dimension panel |
+   575→   575→| 9 | **Company Profile** (`embed-widget-symbol-info.js`) | Fundamentals snapshot | Drilldown "Company" tab |
+   576→   576→| 10 | **Financials** (`embed-widget-financials.js`) | Income / balance / cash-flow statements | Drilldown "Financials" tab |
+   577→   577→| 11 | **News** (`embed-widget-timeline.js`) | Symbol-specific news feed | Drilldown sidebar — supplements §11.4 |
+   578→   578→| 12 | **Stock Heatmap** (`embed-widget-stock-heatmap.js`) | NASDAQ-wide heatmap by market cap / change | Homepage "Heatmap" tab |
+   579→   579→
+   580→   580→### 12.3 Implementation Rules
+   581→   581→1. **Symbol mapping:** `NASDAQ:{TICKER}` (e.g., `NASDAQ:AAPL`). All 5,569 symbols map cleanly.
+   582→   582→2. **Theme sync:** widget theme follows app theme via `tvWidgetOptions.theme`.
+   583→   583→3. **Locale:** `en` default; respect `Accept-Language`.
+   584→   584→4. **Autosize:** `autosize: true` inside responsive containers.
+   585→   585→5. **Lazy loading:** `IntersectionObserver` for below-fold widgets.
+   586→   586→6. **Error isolation:** if a widget fails, degrade gracefully to BedaanWaves-native Plotly/Recharts chart from yfinance candles — **never** a blank box.
+   587→   587→7. **Provenance separation:** every TradingView embed labeled "Powered by TradingView" and visually distinct from BedaanWaves-native panels. Score numbers **never** appear inside a TradingView widget.
+   588→   588→8. **No paywall leakage:** free-tier only. No premium indicators.
+   589→   589→9. **CSP compliance:** allow `https://s3.tradingview.com`, `https://www.tradingview.com`, `https://www.tradingview-widget.com`.
+   590→   590→10. **Performance budget:** ≤ 300 KB gzipped TV JS per page; ≤ 6 active embeds per page.
+   591→   591→
+   592→   592→### 12.4 Advanced Chart Configuration (Drilldown Primary)
+   593→   593→```js
+   594→   594→new TradingView.widget({
+   595→   595→  container_id: "tv_advanced_chart",
+   596→   596→  symbol: `NASDAQ:${ticker}`,
+   597→   597→  interval: "D",
+   598→   598→  timezone: "America/New_York",
+   599→   599→  theme: userTheme,
+   600→   600→  style: "1",
+   601→   601→  locale: "en",
+   602→   602→  toolbar_bg: "#f1f3f6",
+   603→   603→  enable_publishing: false,
+   604→   604→  allow_symbol_change: true,
+   605→   605→  hide_side_toolbar: false,
+   606→   606→  details: true,
+   607→   607→  withdateranges: true,
+   608→   608→  autosize: true,
+   609→   609→  studies: ["RSI@tv-basicstudies", "MASimple@tv-basicstudies", "MACD@tv-basicstudies"]
+   610→   610→});
+   611→   611→```
+   612→   612→
+   613→   613→### 12.5 Technical Analysis Widget — Cross-Reference Rule
+   614→   614→Displayed **side-by-side** with BedaanWaves' `technical` dimension score:
+   615→   615→- Left: `BedaanWaves Technical Score: 72 (BULLISH)` — ML-weighted, per-symbol coefficient output.
+   616→   616→- Right: `TradingView Technical Rating: Buy` — their fixed-weight summary.
+   617→   617→
+   618→   618→Never averaged, merged, or reconciled in the scoring path. Transparency feature only.
+   619→   619→
+   620→   620→### 12.6 Homepage TradingView Layout
+   621→   621→- **Heatmap tab:** `embed-widget-stock-heatmap.js` on NASDAQ exchange.
+   622→   622→- **Market Overview sidebar:** NASDAQ Composite, NASDAQ-100, 4 user-selected sector ETFs.
+   623→   623→- **Economic Calendar:** rendered in macro panel alongside BedaanWaves macro score.
+   624→   624→
+   625→   625→### 12.7 Attribution & Licensing
+   626→   626→- All widgets retain built-in "Powered by TradingView" attribution — never hidden or restyled to invisibility.
+   627→   627→- Free-tier usage only; no scraping; no reverse-engineering.
+   628→   628→
+   629→   629→---
+   630→   630→
+   631→   631→## 13. NASDAQ-SPECIFIC NOTES
+   632→   632→- Cross-sectional percentile ranking is performed **within NASDAQ universe only**.
+   633→   633→- Minimum market size for stable percentile: ≥ 30 assets. For < 2 assets → `50.0` neutral.
+   634→   634→- Market data sourced exclusively from Yahoo Finance for scoring; TradingView used for display only.
+   635→   635→- Macro indicators are common across all NASDAQ assets, but their **relative weights within `macro` are learned per symbol**.
+   636→   636→
+   637→   637→---
+   638→   638→
+   639→   639→## 14. OBSERVABILITY & OPERATIONS **(NEW)**
+   640→   640→
+   641→   641→### 14.1 Metrics (Prometheus)
+   642→   642→- `scoring_latency_seconds` (histogram, per level)
+   643→   643→- `training_duration_seconds` (histogram, per symbol)
+   644→   644→- `coefficient_drift_psi` (gauge, per symbol per level)
+   645→   645→- `scores_computed_total` (counter)
+   646→   646→- `cold_start_symbols_total` (gauge)
+   647→   647→- `data_quality_rejected_total` (counter)
+   648→   648→- `tradingview_widget_load_failures_total` (counter)
+   649→   649→
+   650→   650→### 14.2 Structured Logging
+   651→   651→- JSON logs with `event`, `symbol`, `level`, `correlation_id`, `duration_ms`.
+   652→   652→- Training logs include `oos_r2`, `oos_ic`, `shap_top_features`.
+   653→   653→- Fallback events tagged `severity: warning` and surfaced in ops dashboard.
+   654→   654→
+   655→   655→### 14.3 Alerting
+   656→   656→- PagerDuty/Slack on: cold-start > 25% of universe, training failures, data quality drop > 10%, scoring latency p99 > 5s.
+   657→   657→
+   658→   658→### 14.4 Audit Trail
+   659→   659→- Every coefficient version stored immutably in model registry.
+   660→   660→- Every score reproducible: `(symbol, timestamp, coefficient_version, raw_data_hash)` → deterministic score.
+   661→   661→- RBAC: read-only analyst, scoring engineer, admin.
+   662→   662→
+   663→   663→---
+   664→   664→
+   665→   665→## 15. SECURITY & COMPLIANCE **(NEW)**
+   666→   666→- **Not financial advice disclaimer** on every page footer.
+   667→   667→- Rate limiting: 60 req/min per IP for anonymous, 600 for authenticated.
+   668→   668→- Input validation: all tickers against `insert_nasdaq_symbols.sql` whitelist.
+   669→   669→- Secrets via env vars / vault; no hardcoded credentials.
+   670→   670→- GDPR/CCPA: watchlists and alerts erasable on request.
+   671→   671→- No PII stored in scoring tables.
+   672→   672→
+   673→   673→---
+   674→   674→
+   675→   675→## 16. KEY INVARIANTS (Non-Negotiable)
+   676→   676→
+   677→   677→1. **All production coefficients are ML-learned, per symbol.** No hardcoded, no global-snapshot weights in the scoring path.
+   678→   678→2. **Scores always ∈ [0, 100]** — every transform clamps.
+   679→   679→3. **Missing data → 50.0 neutral**, never 0, never fabricated.
+   680→   680→4. **Zero mock data.** All displayed and historical scores trace to validated real records.
+   681→   681→5. **NASDAQ-only cross-sectional fairness** — percentile ranking prevents segment bias.
+   682→   682→6. **Coverage-weighted aggregation** — more data → more precise; missing degrades gracefully.
+   683→   683→7. **Regime adaptivity** — weights shift with market conditions, per symbol.
+   684→   684→8. **Lower-is-better awareness** — direction-aware for P/E, volatility, drawdown, debt.
+   685→   685→9. **Daily retraining** — per-symbol coefficients update every 24h.
+   686→   686→10. **Hot-swap** — newly trained coefficients take effect on next cycle without restart.
+   687→   687→11. **≥ 5 indicators per sub-aspect** — 173 sub-aspects, 865+ total.
+   688→   688→12. **Full historical integrity** — every past score reproducible from raw data + versioned coefficients.
+   689→   689→13. **TradingView is display-only.** No TradingView data ever enters scoring, training, or persistence.
+   690→   690→14. **Attribution preserved.** All TradingView widgets keep their built-in branding.
+   691→   691→15. **Point-in-time correctness.** No lookahead bias, no survivorship bias, corporate-action adjusted.
+   692→   692→16. **Uncertainty quantified.** Every score carries a conformal prediction interval.
+   693→   693→17. **Drift-aware.** Models retrain on drift detection, not just schedule.
+   694→   694→18. **Auditable.** Every score resolves to `(symbol, timestamp, coefficient_version, data_hash)`.
+   695→   695→
+   696→   696→---
+   697→   697→
+   698→   698→## 17. EXTENSION POINTS
+   699→   699→- **New metrics** → append to `METRIC_UNIVERSE`; hierarchy + training auto-derive.
+   700→   700→- **New markets** → implement `IScoringStrategy` in `scoring_strategies.py`.
+   701→   701→- **New ML models** → wire through `CoefficientLearningService` or `MLSignal`.
+   702→   702→- **Custom weighting** → implement coefficient learner, register in dependency container.
+   703→   703→- **New UI panels** → mount under drilldown view; consume `RankingService` contracts only.
+   704→   704→- **New TradingView widget** → register in `tradingview_widgets.ts` with symbol-mapping + lazy-load + fallback.
+   705→   705→- **New timeframe** → extend timeframe aggregation in `timeframe_weights.json` schema.
+   706→   706→
+   707→   707→---
+   708→   708→
+   709→   709→## 18. ACCEPTANCE CRITERIA (Definition of Done)
+   710→   710→
+   711→   711→| # | Requirement | Acceptance Test |
+   712→   712→|---|-------------|-----------------|
+   713→   713→| 1 | Per-symbol historical trends (overall + 6 dims) | Click any symbol → chart renders ≥ 30 days of real data with per-dimension toggles |
+   714→   714→| 2 | Per-symbol dynamic coefficients | `AAPL` and `NVDA` L1 weight vectors differ at same timestamp; diff view confirms |
+   715→   715→| 3 | Radar chart | 6-axis spider renders with current + 30d-ago + NASDAQ-median + sector-median overlays |
+   716→   716→| 4 | Zero mock data | CI guard passes; trace modal resolves every score to `raw_performance_scores.id` |
+   717→   717→| 5 | News ribbon | Sticky top bar streams ≥ 20 curated items/day with sentiment tags |
+   718→   718→| 6 | Rotating ticker | Marquee displays live price + Δ% + score for ≥ 100 symbols, click-to-drilldown works |
+   719→   719→| 7 | Full NASDAQ coverage | All 5,569 seeded symbols appear in search; cold-start ones labeled, never hidden |
+   720→   720→| 8 | TradingView Advanced Chart | Renders inside drilldown for any NASDAQ symbol; theme syncs; RSI/SMA/MACD studies load |
+   721→   721→| 9 | TradingView Technical Analysis cross-reference | Displayed side-by-side with BedaanWaves technical score, clearly labeled, never merged |
+   722→   722→| 10 | TradingView free-tier compliance | All 12 widgets load with attribution; no premium features; CSP allows TV domains |
+   723→   723→| 11 | Widget failover | Blocking `s3.tradingview.com` → native fallback chart renders, no blank panel |
+   724→   724→| 12 | Homepage TV layout | Heatmap + Market Overview + Economic Calendar render and lazy-load correctly |
+   725→   725→| 13 | Multi-timeframe technical | Drilldown shows intraday/daily/weekly/monthly technical sub-scores with learned blend |
+   726→   726→| 14 | Conformal CI | Every score displays a 90% prediction interval; interval narrows as samples grow |
+   727→   727→| 15 | Drift detection | Simulated feature drift > 0.25 PSI triggers retrain within 24h |
+   728→   728→| 16 | Score decomposition | Waterfall renders L1→L4 breakdown; contributions sum to overall |
+   729→   729→| 17 | Peer comparison | Selected symbol vs 5 peers; percentile rank displayed |
+   730→   730→| 18 | Watchlist + alerts | User creates alert "score > 80"; triggers in-app toast on next cycle |
+   731→   731→| 19 | Export | Rankings exportable to CSV/JSON/PDF with real data only |
+   732→   732→| 20 | Audit trail | Any historical score reproducible from `(symbol, timestamp, coefficient_version, data_hash)` |
+   733→   733→
+   734→   734→---
+   735→   735→
+   736→   736→*End of specification — v4.0 FINAL. This document supersedes all prior versions. Any implementation diverging from §3.1 (per-symbol coefficients), §1.2 (anti-mock), §1.3 (point-in-time correctness), or §12.1 (TradingView display-only) is considered non-compliant.*
