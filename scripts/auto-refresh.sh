@@ -16,15 +16,21 @@ timeout 480 python3 scripts/fetch_real_data.py >> "$LOG" 2>&1 || {
     echo "[$(date)] WARNING: OHLCV fetch failed, continuing with existing data" | tee -a "$LOG"
 }
 
-# Step 2: Fetch latest market macro (yfinance)
-echo "[$(date)] [2/4] Fetching latest market macro..." | tee -a "$LOG"
-timeout 120 python3 scripts/fetch_real_macro.py >> "$LOG" 2>&1 || {
+# Step 2: Fetch latest market macro (Node.js — cross-platform)
+echo "[$(date)] [2/4] Fetching latest market macro (Node.js)..." | tee -a "$LOG"
+timeout 180 node scripts/fetch_macro_node.cjs >> "$LOG" 2>&1 || {
     echo "[$(date)] WARNING: macro fetch failed, continuing with existing data" | tee -a "$LOG"
 }
 
-# Step 2b: Update economic releases (real published values)
-echo "[$(date)] [2b/4] Updating economic releases..." | tee -a "$LOG"
-python3 scripts/add_economic_releases.py >> "$LOG" 2>&1 || true
+# Step 2b: Fetch international economic indicators
+echo "[$(date)] [2b/4] Fetching international economic indicators..." | tee -a "$LOG"
+timeout 180 node scripts/fetch_intl_econ.cjs >> "$LOG" 2>&1 || {
+    echo "[$(date)] WARNING: intl econ fetch failed, continuing" | tee -a "$LOG"
+}
+
+# Step 2c: Add source attribution to economic releases
+echo "[$(date)] [2c/4] Adding source attribution..." | tee -a "$LOG"
+node scripts/add_sources.cjs >> "$LOG" 2>&1 || true
 
 # Step 3: Fetch latest real news (z-ai web-search)
 echo "[$(date)] [3/4] Fetching latest real news via web-search..." | tee -a "$LOG"

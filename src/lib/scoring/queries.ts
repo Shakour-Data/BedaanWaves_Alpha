@@ -8,17 +8,53 @@ import { gradeFor } from "@/lib/scoring/transforms";
 import { getRealUniverse } from "@/lib/real-store";
 import type { DimensionKey } from "@/lib/scoring/metric-universe";
 
-export async function getLatestCapturedAt(): Promise<Date> {
+export async function getLatestCapturedAt(generationId?: string): Promise<Date> {
   const row = await db.scoreSnapshot.findFirst({
+    where: generationId ? { generationId } : undefined,
     orderBy: { capturedAt: "desc" },
     select: { capturedAt: true },
   });
   return row ? new Date(row.capturedAt) : new Date(0);
 }
 
+export async function getLatestCapturedAtPerSymbol(ticker: string, generationId?: string): Promise<Date | null> {
+  const row = await db.scoreSnapshot.findFirst({
+    where: {
+      ticker,
+      ...(generationId ? { generationId } : {}),
+    },
+    orderBy: { capturedAt: "desc" },
+    select: { capturedAt: true },
+  });
+  return row ? new Date(row.capturedAt) : null;
+}
+
+export async function getSuccessfulGenerations(): Promise<string[]> {
+  const generations = await db.batchManifest.findMany({
+    where: { status: "COMPLETED" },
+    select: { generationId: true },
+    distinct: ["generationId"],
+    orderBy: { completedAt: "desc" },
+  });
+  return generations.map((g) => g.generationId).filter((g): g is string => g !== null);
+}
+
 export async function getPrevCapturedAt(latest: Date): Promise<Date | null> {
   const row = await db.scoreSnapshot.findFirst({
     where: { capturedAt: { lt: latest } },
+    orderBy: { capturedAt: "desc" },
+    select: { capturedAt: true },
+  });
+  return row ? new Date(row.capturedAt) : null;
+}
+
+export async function getPrevCapturedAtPerSymbol(ticker: string, latest: Date, generationId?: string): Promise<Date | null> {
+  const row = await db.scoreSnapshot.findFirst({
+    where: {
+      ticker,
+      capturedAt: { lt: latest },
+      ...(generationId ? { generationId } : {}),
+    },
     orderBy: { capturedAt: "desc" },
     select: { capturedAt: true },
   });
@@ -40,6 +76,8 @@ export interface RankingsQuery {
   order?: "asc" | "desc";
   isEtf?: boolean | null;
   columnFilters?: RankingColumnFilter[];
+  generationId?: string;
+  processingStatus?: string;
 }
 
 export type RankingColumnKey =
@@ -162,11 +200,16 @@ export interface RankingsResult {
     dimensionScores: Record<DimensionKey, number>;
     coefficientVersion: string;
     signals: string[];
+    processingStatus: string | null;
+    batchId: string | null;
+    generationId: string | null;
+    dataQuality: string | null;
   }>;
   total: number;
   page: number;
   pageSize: number;
   latestAt: string;
+  generationId: string | null;
 }
 
 type RankingRecord = {
@@ -188,6 +231,10 @@ type RankingRecord = {
   dimensionScores: Record<DimensionKey, number>;
   coefficientVersion: string;
   signals: string[];
+  processingStatus: string | null;
+  batchId: string | null;
+  generationId: string | null;
+  dataQuality: string | null;
   rank?: number;
 };
 
@@ -319,13 +366,17 @@ function compareRankingRecords(
 export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   const page = Math.max(1, q.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 25));
-  const latest = await getLatestCapturedAt();
+  
+  // Use latest successful generation if not specified
+  const generationId = q.generationId ?? (await getSuccessfulGenerations())[0];
+  const latest = await getLatestCapturedAt(generationId);
 
   // Fetch latest + previous snapshot per ticker using select (not include)
   // to avoid loading large JSON fields (subAspectScores, aspectScores, etc.)
   // that overwhelm the Prisma query engine with 32K+ records.
   // We only need: overall (for delta), capturedAt, and ticker to deduplicate.
   const all = await db.scoreSnapshot.findMany({
+    where: generationId ? { generationId } : undefined,
     select: {
       ticker: true,
       overall: true,
@@ -337,6 +388,10 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
           industry: true,
           marketCap: true,
           isEtf: true,
+          processingStatus: true,
+          batchId: true,
+          generationId: true,
+          dataQuality: true,
         },
       },
     },
@@ -344,7 +399,7 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   });
 
   // Deduplicate: latest snapshot per ticker + previous overall for delta.
-  const latestSnapshots: typeof all = [];
+  let latestSnapshots: typeof all = [];
   const prevOveralls: Record<string, number> = {};
   const latestSeen = new Set<string>();
   for (const row of all) {
@@ -356,6 +411,11 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     }
     latestSeen.add(row.ticker);
     latestSnapshots.push(row);
+  }
+
+  // Filter by processingStatus if specified
+  if (q.processingStatus) {
+    latestSnapshots = latestSnapshots.filter((row) => row.symbol.processingStatus === q.processingStatus);
   }
 
   // Fetch remaining fields (dimensionScores, signals, etc.) only for the
@@ -393,18 +453,17 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   const detailByTicker = new Map<string, typeof detailRows[number]>();
   for (const d of detailRows) detailByTicker.set(d.ticker, d);
 
-  const records: RankingRecord[] = latestSnapshots.map((row) => {
+  const records: RankingRecord[] = [];
+  for (const row of latestSnapshots) {
     const detail = detailByTicker.get(row.ticker);
-    if (!detail) {
-      return null;
-    }
+    if (!detail) continue;
     const dimensionScores = JSON.parse(detail.dimensionScores) as Record<string, number>;
     const typedDimensions = {} as Record<DimensionKey, number>;
     for (const dimension of DIMENSION_KEYS) {
       typedDimensions[dimension] = dimensionScores[dimension] ?? 50;
     }
     const previousOverall = prevOveralls[row.ticker];
-    return {
+    records.push({
       ticker: row.ticker,
       name: row.symbol.name,
       sector: row.symbol.sector,
@@ -423,8 +482,12 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
       dimensionScores: typedDimensions,
       coefficientVersion: detail.coefficientVersion,
       signals: JSON.parse(detail.signals) as string[],
-    };
-  }).filter((r): r is RankingRecord => r !== null);
+      processingStatus: row.symbol.processingStatus,
+      batchId: row.symbol.batchId,
+      generationId: row.symbol.generationId,
+      dataQuality: row.symbol.dataQuality,
+    });
+  }
 
   // Filter out symbols with fewer than 50 candles
   const universe = getRealUniverse();
@@ -513,30 +576,55 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
       dimensionScores: record.dimensionScores,
       coefficientVersion: record.coefficientVersion,
       signals: record.signals,
+      processingStatus: record.processingStatus,
+      batchId: record.batchId,
+      generationId: record.generationId,
+      dataQuality: record.dataQuality,
     })),
     total,
     page,
     pageSize,
     latestAt: latest.toISOString(),
+    generationId,
   };
 }
 
 // ─── Symbol drilldown: latest snapshot + meta + prev ──────────────────────────
-export async function fetchSymbolDetail(ticker: string) {
+export async function fetchSymbolDetail(ticker: string, generationId?: string) {
   const symbol = await db.symbol.findUnique({
     where: { ticker: ticker.toUpperCase() },
   });
   if (!symbol) return null;
-  const latest = await getLatestCapturedAt();
-  const snap = await db.scoreSnapshot.findUnique({
-    where: { ticker_capturedAt: { ticker: symbol.ticker, capturedAt: latest } },
+
+  // Use symbol's generationId if not specified
+  const effectiveGenerationId = generationId ?? symbol.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(symbol.ticker, effectiveGenerationId);
+  
+  if (!latest) {
+    // No snapshot yet — return symbol with status info for UI to show processingStatus/failedReason
+    return {
+      symbol,
+      snapshot: null,
+      prevOverall: null,
+    };
+  }
+
+  const snap = await db.scoreSnapshot.findFirst({
+    where: { ticker: symbol.ticker, capturedAt: latest, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
   });
-  if (!snap) return null;
-  const prev = await getPrevCapturedAt(latest);
+  if (!snap) {
+    return {
+      symbol,
+      snapshot: null,
+      prevOverall: null,
+    };
+  }
+
+  const prev = await getPrevCapturedAtPerSymbol(symbol.ticker, latest, effectiveGenerationId);
   let prevOverall: number | null = null;
   if (prev) {
-    const prevSnap = await db.scoreSnapshot.findUnique({
-      where: { ticker_capturedAt: { ticker: symbol.ticker, capturedAt: prev } },
+    const prevSnap = await db.scoreSnapshot.findFirst({
+      where: { ticker: symbol.ticker, capturedAt: prev, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
       select: { overall: true },
     });
     prevOverall = prevSnap?.overall ?? null;
@@ -549,14 +637,18 @@ export async function fetchSymbolDetail(ticker: string) {
 }
 
 // ─── History (overall + 6 dimensions, multi-timeframe) ───────────────────────
-export async function fetchSymbolHistory(ticker: string, range: string) {
+export async function fetchSymbolHistory(ticker: string, range: string, generationId?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
-  const latest = await getLatestCapturedAt();
+  
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(sym.ticker, effectiveGenerationId);
+  if (!latest) return [];
+  
   const days = rangeToDays(range);
   const since = new Date(latest.getTime() - days * 86_400_000);
   const rows = await db.scoreSnapshot.findMany({
-    where: { ticker: sym.ticker, capturedAt: { gte: since } },
+    where: { ticker: sym.ticker, capturedAt: { gte: since }, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
     orderBy: { capturedAt: "asc" },
     select: {
       capturedAt: true,
@@ -610,11 +702,12 @@ function rangeToDays(range: string): number {
 }
 
 // ─── Coefficients (all 4 levels for a symbol) ──────────────────────────────────
-export async function fetchCoefficients(ticker: string) {
+export async function fetchCoefficients(ticker: string, generationId?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
   const rows = await db.coefficient.findMany({
-    where: { ticker: sym.ticker },
+    where: { ticker: sym.ticker, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
   });
   const byLevel: Record<string, (typeof rows)[number]> = {};
   for (const r of rows) byLevel[r.level] = r;
@@ -622,12 +715,16 @@ export async function fetchCoefficients(ticker: string) {
 }
 
 // ─── Radar profile (6-dim vector + overlays) ───────────────────────────────────
-export async function fetchRadarProfile(ticker: string) {
+export async function fetchRadarProfile(ticker: string, generationId?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
-  const latest = await getLatestCapturedAt();
-  const snap = await db.scoreSnapshot.findUnique({
-    where: { ticker_capturedAt: { ticker: sym.ticker, capturedAt: latest } },
+  
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(sym.ticker, effectiveGenerationId);
+  if (!latest) return null;
+  
+  const snap = await db.scoreSnapshot.findFirst({
+    where: { ticker: sym.ticker, capturedAt: latest, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
   });
   if (!snap) return null;
   const dims = JSON.parse(snap.dimensionScores) as Record<string, number>;
@@ -635,16 +732,16 @@ export async function fetchRadarProfile(ticker: string) {
   // 30-day-ago profile
   const thirtyAgo = new Date(latest.getTime() - 30 * 86_400_000);
   const thirtyAgoSnap = await db.scoreSnapshot.findFirst({
-    where: { ticker: sym.ticker, capturedAt: { lte: thirtyAgo } },
+    where: { ticker: sym.ticker, capturedAt: { lte: thirtyAgo }, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
     orderBy: { capturedAt: "desc" },
   });
   const thirtyAgoDims = thirtyAgoSnap
     ? (JSON.parse(thirtyAgoSnap.dimensionScores) as Record<string, number>)
     : null;
 
-  // NASDAQ median profile (latest day)
+  // NASDAQ median profile (latest day for this generation)
   const allLatest = await db.scoreSnapshot.findMany({
-    where: { capturedAt: latest, ticker: { not: sym.ticker } },
+    where: { capturedAt: latest, ticker: { not: sym.ticker }, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
     select: { dimensionScores: true },
   });
   const nasdaqMedian: Record<string, number> = {};
@@ -661,6 +758,7 @@ export async function fetchRadarProfile(ticker: string) {
       capturedAt: latest,
       ticker: { not: sym.ticker },
       symbol: { sector: sym.sector },
+      ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}),
     },
     select: { dimensionScores: true },
   });
@@ -696,12 +794,16 @@ export async function fetchRadarProfile(ticker: string) {
 }
 
 // ─── Decomposition (waterfall: L1 contributions + drilldown) ──────────────────
-export async function fetchDecomposition(ticker: string) {
+export async function fetchDecomposition(ticker: string, generationId?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
-  const latest = await getLatestCapturedAt();
-  const snap = await db.scoreSnapshot.findUnique({
-    where: { ticker_capturedAt: { ticker: sym.ticker, capturedAt: latest } },
+  
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(sym.ticker, effectiveGenerationId);
+  if (!latest) return null;
+  
+  const snap = await db.scoreSnapshot.findFirst({
+    where: { ticker: sym.ticker, capturedAt: latest, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
   });
   if (!snap) return null;
   const dimScores = JSON.parse(snap.dimensionScores) as Record<string, number>;
@@ -709,7 +811,7 @@ export async function fetchDecomposition(ticker: string) {
   const aspectScores = JSON.parse(snap.aspectScores) as Record<string, number>;
   const subAspectScores = JSON.parse(snap.subAspectScores) as Record<string, number>;
   const coeffs = await db.coefficient.findMany({
-    where: { ticker: sym.ticker },
+    where: { ticker: sym.ticker, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
   });
   const byLevel: Record<string, Record<string, number>> = {};
   for (const c of coeffs) byLevel[c.level] = JSON.parse(c.weights);
@@ -728,12 +830,22 @@ export async function fetchDecomposition(ticker: string) {
 }
 
 // ─── Peer comparison (selected vs 5 nearest by sector + market cap) ───────────
-export async function fetchPeers(ticker: string, compareTicker?: string) {
+export async function fetchPeers(ticker: string, compareTicker?: string, generationId?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
-  const latest = await getLatestCapturedAt();
+  
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(sym.ticker, effectiveGenerationId);
+  if (!latest) return null;
+  
+  // Use symbols from the same generation (or all if legacy)
   const allInSector = await db.symbol.findMany({
-    where: { sector: sym.sector, ticker: { not: sym.ticker }, isEtf: false },
+    where: { 
+      sector: sym.sector, 
+      ticker: { not: sym.ticker }, 
+      isEtf: false,
+      ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}),
+    },
   });
   // nearest 5 by market cap
   const sorted = allInSector
@@ -748,7 +860,7 @@ export async function fetchPeers(ticker: string, compareTicker?: string) {
     : [sym.ticker, ...peerTickers];
     
   const snaps = await db.scoreSnapshot.findMany({
-    where: { capturedAt: latest, ticker: { in: allTickers } },
+    where: { capturedAt: latest, ticker: { in: allTickers }, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
     include: { symbol: true },
   });
   const rows = snaps.map((s) => {
@@ -817,20 +929,25 @@ export async function fetchTickerTape(limit = 100) {
 }
 
 // ─── Trace (provenance / lineage for a score) ────────────────────────────────────
-export async function fetchTrace(ticker: string) {
+export async function fetchTrace(ticker: string, generationId?: string) {
   const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
   if (!sym) return null;
-  const latest = await getLatestCapturedAt();
-  const snap = await db.scoreSnapshot.findUnique({
-    where: { ticker_capturedAt: { ticker: sym.ticker, capturedAt: latest } },
+  
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(sym.ticker, effectiveGenerationId);
+  if (!latest) return null;
+  
+  const snap = await db.scoreSnapshot.findFirst({
+    where: { ticker: sym.ticker, capturedAt: latest, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
   });
   if (!snap) return null;
+  
   const coeffs = await db.coefficient.findMany({
-    where: { ticker: sym.ticker },
+    where: { ticker: sym.ticker, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
     select: { level: true, version: true, dataHash: true, trainedAt: true, sampleCount: true },
   });
   const trainingRuns = await db.trainingRun.findMany({
-    where: { ticker: sym.ticker },
+    where: { ticker: sym.ticker, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
     orderBy: { startedAt: "desc" },
     take: 5,
   });
@@ -842,6 +959,8 @@ export async function fetchTrace(ticker: string) {
     coefficientVersion: snap.coefficientVersion,
     rawDataHash: snap.rawDataHash,
     isProcessed: snap.isProcessed,
+    batchId: snap.batchId,
+    generationId: snap.generationId,
     coefficients: coeffs,
     trainingRuns,
   };

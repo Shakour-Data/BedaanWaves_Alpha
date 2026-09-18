@@ -13,6 +13,10 @@ interface SymbolHit {
   industry: string;
   marketCap: number;
   isEtf: boolean;
+  processingStatus?: string | null;
+  batchId?: string | null;
+  generationId?: string | null;
+  dataQuality?: string | null;
 }
 
 interface Props {
@@ -98,6 +102,11 @@ export function Header({ onSymbolSelect }: Props) {
                   </div>
                   <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
                     {h.isEtf && <Badge variant="outline" className="text-[8px]">ETF</Badge>}
+                    {h.processingStatus && h.processingStatus !== "REGISTERED" && (
+                      <Badge variant="outline" className="text-[8px]">
+                        {h.processingStatus}
+                      </Badge>
+                    )}
                     <span>{h.sector}</span>
                     <span className="font-mono">
                       ${(h.marketCap / 1e9).toFixed(0)}B

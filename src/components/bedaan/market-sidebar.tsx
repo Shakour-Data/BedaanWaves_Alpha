@@ -1,8 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck, Database, Cpu, Zap } from "lucide-react";
+import { ShieldCheck, Database, Cpu, Zap, Clock, Plus } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { TAXONOMY_STATS } from "@/lib/scoring/metric-universe";
 
 interface Props {
@@ -19,7 +20,33 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
     refetchInterval: 30_000,
   });
 
+  const batchesQ = useQuery({
+    queryKey: ["ingestion-batches"],
+    queryFn: async () => {
+      const r = await fetch("/api/ingestion/batches");
+      return r.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  // Fetch top symbols by market cap for Quick Access
+  const topSymbolsQ = useQuery({
+    queryKey: ["top-symbols"],
+    queryFn: async () => {
+      const r = await fetch("/api/symbols?limit=10");
+      const j = await r.json();
+      return j.symbols.sort((a: { marketCap: number }, b: { marketCap: number }) => b.marketCap - a.marketCap).slice(0, 10);
+    },
+  });
+
   const status = statusQ.data;
+  const batches = batchesQ.data?.batches ?? [];
+  const latestBatch = batches[0];
+
+  // Count fully processed symbols (COEFFICIENTS_TRAINED or UI_VERIFIED)
+  const fullyProcessed = status?.grades?.reduce((sum: number, g: { count: number }) => sum + g.count, 0) ?? 0;
+  const totalSymbols = status?.totalSymbols ?? 0;
+  const registeredButNotProcessed = totalSymbols - fullyProcessed;
 
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -39,7 +66,9 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
           <Skeleton className="h-16 w-full" />
         ) : (
           <div className="space-y-0.5 text-[10px]">
-            <Row label="Symbols" value={status?.totalSymbols ?? 0} />
+            <Row label="Total Symbols" value={totalSymbols} />
+            <Row label="Fully Processed" value={fullyProcessed} />
+            <Row label="Registered Only" value={registeredButNotProcessed} warn={registeredButNotProcessed > 0} />
             <Row label="Snapshots" value={status?.totalSnapshots ?? 0} />
             <Row label="Coefficients" value={status?.totalCoefficients ?? 0} />
             <Row label="News" value={status?.totalNews ?? 0} />
@@ -54,6 +83,42 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
           <div className="mt-1 text-[8px] text-green-600 dark:text-green-400">
             Refreshed {formatRelativeTime(status.lastRefresh)}
           </div>
+        )}
+      </div>
+
+      {/* Recent Batch / Newly Added */}
+      <div className="rounded border border-border bg-card p-2 col-span-2 sm:col-span-3 lg:col-span-3">
+        <div className="mb-1 flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-primary" />
+          <span className="text-[11px] font-semibold">Recent Batch</span>
+          {latestBatch && (
+            <Badge variant="outline" className="ml-auto text-[9px]">
+              {latestBatch.status}
+            </Badge>
+          )}
+        </div>
+        {batchesQ.isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : latestBatch ? (
+          <div className="space-y-1 text-[10px]">
+            <Row label="Batch ID" value={latestBatch.batchId?.slice(-16) ?? "—"} />
+            <Row label="Selected" value={latestBatch.batchSize ?? 0} />
+            <Row label="Raw Success" value={latestBatch.validationSummary?.rawSuccess ?? "—"} />
+            <Row label="Scored" value={latestBatch.validationSummary?.scored ?? "—"} />
+            <Row label="Failed" value={latestBatch.validationSummary?.rawFailure ?? 0} warn={(latestBatch.validationSummary?.rawFailure ?? 0) > 0} />
+            <Row label="Insufficient" value={latestBatch.validationSummary?.insufficient ?? 0} warn={(latestBatch.validationSummary?.insufficient ?? 0) > 0} />
+            <Row label="Partial" value={latestBatch.validationSummary?.partial ?? 0} warn={(latestBatch.validationSummary?.partial ?? 0) > 0} />
+            <div className="mt-1 text-[8px] text-muted-foreground">
+              Generation: {latestBatch.generationId?.slice(-12) ?? "—"}
+            </div>
+            {latestBatch.failedTickers?.length > 0 && (
+              <div className="mt-1 text-[9px] text-amber-600 dark:text-amber-400">
+                Failed: {latestBatch.failedTickers.map((f: { ticker: string }) => f.ticker).join(", ")}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-[10px] text-muted-foreground">No batch data available</div>
         )}
       </div>
 
@@ -143,20 +208,24 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
         )}
       </div>
 
-      {/* Quick access symbols */}
+      {/* Quick access symbols - dynamic top by market cap */}
       <div className="rounded border border-border bg-card p-2">
-        <div className="mb-1 text-[11px] font-semibold">Quick Access</div>
-        <div className="flex flex-wrap gap-1">
-          {["AAPL", "NVDA", "MSFT", "TSLA", "META", "AMZN", "GOOGL", "AMD", "NFLX", "AVGO"].map((t) => (
-            <button
-              key={t}
-              onClick={() => onSymbolSelect?.(t)}
-              className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] hover:bg-primary hover:text-primary-foreground"
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <div className="mb-1 text-[11px] font-semibold">Quick Access (Top by Mkt Cap)</div>
+        {topSymbolsQ.isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {topSymbolsQ.data?.map((t: { ticker: string }) => (
+              <button
+                key={t.ticker}
+                onClick={() => onSymbolSelect?.(t.ticker)}
+                className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] hover:bg-primary hover:text-primary-foreground"
+              >
+                {t.ticker}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

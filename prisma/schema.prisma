@@ -17,6 +17,10 @@ model Symbol {
   isEtf            Boolean          @default(false)
   listedAt         DateTime?
   createdAt        DateTime         @default(now())
+  processingStatus String?          @default("REGISTERED")
+  batchId          String?
+  generationId     String?
+  dataQuality      String?          @default("UNKNOWN")
   alerts           Alert[]
   coefficients     Coefficient[]
   newsMentions     NewsItemSymbol[]
@@ -25,6 +29,55 @@ model Symbol {
 
   @@index([sector])
   @@index([marketCap])
+  @@index([generationId], map: "idx_symbol_generationId")
+  @@index([batchId], map: "idx_symbol_batchId")
+  @@index([processingStatus], map: "idx_symbol_processingStatus")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model BatchManifest {
+  id                  String   @id @default(cuid())
+  batchId             String   @unique
+  batchIndex          Int?
+  batchSize           Int?
+  sourceRevision      String?
+  sourceHash          String?
+  selectedTickers     String?
+  skippedTickers      String?
+  failedTickers       String?
+  startedAt           DateTime @default(now())
+  completedAt         DateTime?
+  status              String   @default("RUNNING")
+  rawRowsWritten      Int      @default(0)
+  snapshotsWritten    Int      @default(0)
+  coefficientsWritten Int      @default(0)
+  trainingRunsWritten Int      @default(0)
+  validationSummary   String?
+  errorDetails        String?
+  generationId        String?
+
+  @@index([generationId], map: "idx_batch_generationId")
+  @@index([status], map: "idx_batch_status")
+}
+
+model MarketBar {
+  ticker      String
+  date        String
+  open        Float
+  high        Float
+  low         Float
+  close       Float
+  volume      Float
+  adjusted    Boolean   @default(true)
+  source      String
+  fetchedAt   DateTime
+  batchId     String?
+  rawDataHash String
+
+  @@id([ticker, date])
+  @@index([ticker])
+  @@index([date])
+  @@index([batchId], map: "idx_marketbar_batchId")
 }
 
 model ScoreSnapshot {
@@ -49,32 +102,40 @@ model ScoreSnapshot {
   dataQuality        String   @default("VALIDATED")
   coefficientVersion String
   rawDataHash        String
+  generationId       String?
+  batchId            String?
   symbol             Symbol   @relation(fields: [ticker], references: [ticker])
 
   @@unique([ticker, capturedAt])
   @@index([capturedAt])
   @@index([overall])
   @@index([grade])
+  @@index([batchId], map: "idx_snap_batchId")
+  @@index([generationId], map: "idx_snap_generationId")
 }
 
 model Coefficient {
-  id          String   @id @default(cuid())
-  ticker      String
-  level       String
-  weights     String
-  trainedAt   DateTime
-  sampleCount Int
-  version     String
-  dataHash    String
-  driftStatus String   @default("OK")
-  oosR2       Float?
-  oosIc       Float?
-  shapTopKeys String?
-  meta        String?
-  symbol      Symbol   @relation(fields: [ticker], references: [ticker])
+  id           String   @id @default(cuid())
+  ticker       String
+  level        String
+  weights      String
+  trainedAt    DateTime
+  sampleCount  Int
+  version      String
+  dataHash     String
+  driftStatus  String   @default("OK")
+  oosR2        Float?
+  oosIc        Float?
+  shapTopKeys  String?
+  meta         String?
+  generationId String?
+  batchId      String?
+  symbol       Symbol   @relation(fields: [ticker], references: [ticker])
 
   @@unique([ticker, level])
   @@index([ticker])
+  @@index([batchId], map: "idx_coeff_batchId")
+  @@index([generationId], map: "idx_coeff_generationId")
 }
 
 model NewsItem {
@@ -138,20 +199,24 @@ model Alert {
 }
 
 model TrainingRun {
-  id          String   @id @default(cuid())
-  ticker      String
-  level       String
-  startedAt   DateTime
-  durationMs  Int
-  sampleCount Int
-  oosR2       Float?
-  oosIc       Float?
-  driftPsi    Float?
-  regime      String
-  status      String
-  version     String
-  notes       String?
+  id           String   @id @default(cuid())
+  ticker       String
+  level        String
+  startedAt    DateTime
+  durationMs   Int
+  sampleCount  Int
+  oosR2        Float?
+  oosIc        Float?
+  driftPsi     Float?
+  regime       String
+  status       String
+  version      String
+  notes        String?
+  generationId String?
+  batchId      String?
 
   @@index([ticker])
   @@index([startedAt])
+  @@index([batchId], map: "idx_tr_batchId")
+  @@index([generationId], map: "idx_tr_generationId")
 }

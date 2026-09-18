@@ -14,7 +14,7 @@ import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Activity, DollarSign, Wind, ChevronDown } from "lucide-react";
+import { AlertTriangle, Activity, Check, DollarSign, Wind, ChevronDown, TrendingUp, Globe, Calendar, Clock, BarChart3, X } from "lucide-react";
 import { ResponsiveContainer, Treemap } from "recharts";
 import {
   rsi,
@@ -30,6 +30,8 @@ import { CandlestickChart } from "@/components/bedaan/candlestick-chart";
 import { gradeColor, clamp } from "@/lib/scoring/transforms";
 import type { DimensionKey } from "@/lib/scoring/metric-universe";
 import type { MacroIndicator } from "@/lib/real-store";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface CandleBar {
   date: string;
@@ -443,92 +445,255 @@ function HeatTile(props: HeatTileProps) {
   );
 }
 
-// ── Economic calendar (real published government statistics + recent news) ─────
+// ── Economic calendar (real published government statistics + global indicators) ─
 export function NativeEconomicCalendar({ height = 450 }: { height?: number }) {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [countryFilter, setCountryFilter] = useState<string | null>(null);
+  const [countryPopoverOpen, setCountryPopoverOpen] = useState(false);
   const { data, isLoading, isError } = useQuery<{
     releases: MacroIndicator[];
+    market: MacroIndicator[];
     news: Array<{ headline: string; source: string; publishedAt: string; sentiment: string; tickers: string[] }>;
   }>({
-    queryKey: ["macro-calendar"],
+    queryKey: ["macro-calendar", refreshKey],
     queryFn: async () => {
       const [m, n] = await Promise.all([
         fetch("/api/macro").then((r) => r.json()),
         fetch("/api/news").then((r) => r.json()),
       ]);
-      return { releases: m.releases, news: n.items ?? [] };
+      // Include international market indicators as economic calendar entries
+      const intlMarket = (m.market || []).filter((i: MacroIndicator) =>
+        ["UK","Japan","Australia","Canada","Switzerland","China","India","Mexico","Brazil","South Africa","South Korea","Singapore","Sweden","Norway","New Zealand","Hong Kong","Germany","Netherlands"].includes(i.country)
+      );
+      return { releases: m.releases, market: intlMarket, news: n.items ?? [] };
     },
-    staleTime: 10 * 60_000,
+    staleTime: 60_000,
+    refetchInterval: 120_000,
   });
 
   if (isLoading) return <Skeleton className="h-full w-full" />;
   if (isError || !data?.releases?.length) return <NoDataMessage label="No economic data" />;
 
+  const allItems = [...data.releases, ...data.market];
+  const countries = Array.from(new Set(allItems.map((r) => r.country))).sort();
+  const filtered = countryFilter
+    ? allItems.filter((r) => r.country === countryFilter)
+    : allItems;
+
+  const groupedByCountry = filtered.reduce((acc, r) => {
+    if (!acc[r.country]) acc[r.country] = [];
+    acc[r.country].push(r);
+    return acc;
+  }, {} as Record<string, MacroIndicator[]>);
+
   return (
-    <div className="h-full w-full">
-      <div className="mb-2 text-xs text-muted-foreground">
-        Real published statistics — sources: {data.releases[0]?.source ?? "—"}
-      </div>
-      <div className="overflow-y-auto" style={{ height: height - 24 }}>
-        <table className="w-full text-[10px]">
-          <thead>
-            <tr className="border-b border-border text-left">
-              <th className="pb-1 font-medium text-muted-foreground">Release</th>
-              <th className="pb-1 font-medium text-muted-foreground">Latest</th>
-              <th className="pb-1 font-medium text-muted-foreground">Date</th>
-              <th className="pb-1 font-medium text-muted-foreground">Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.releases.map((r) => (
-              <tr key={r.key} className="border-b border-border/40">
-                <td className="py-1">{r.label}</td>
-                <td className="py-1 font-mono">
-                  {priceFmt(r.value, r.unit)}{" "}
-                  {r.changePct != null && (
-                    <span
-                      className={r.changePct >= 0 ? "text-green-600" : "text-red-500"}
-                    >
-                      ({r.changePct >= 0 ? "+" : ""}
-                      {r.changePct.toFixed(2)}%)
+    <div className="flex h-full w-full flex-col">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-primary" />
+          <span className="text-xs font-semibold">Economic Calendar</span>
+          <Badge variant="outline" className="text-[9px]">
+            {filtered.length} indicators · {countries.length} countries
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
+            <Popover
+              open={countryPopoverOpen}
+              onOpenChange={setCountryPopoverOpen}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-[150px] justify-between px-2.5 text-[10px] font-medium"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Globe className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span className="truncate">
+                      {countryFilter ?? "All countries"}
                     </span>
-                  )}
-                </td>
-                <td className="py-1 text-muted-foreground">
-                  {r.releaseDate ?? r.date}
-                </td>
-                <td className="py-1 text-muted-foreground">{r.source ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-2 border-t border-border pt-2">
-        <div className="mb-1 text-[10px] font-semibold">Recent Market Events</div>
-        <div className="flex flex-col gap-1 overflow-y-auto text-[10px]">
-          {data.news.slice(0, 6).map((n) => (
-            <div key={n.headline} className="flex items-start gap-2">
-              <Badge
-                variant="outline"
-                className={
-                  "text-[9px] " +
-                  (n.sentiment === "bullish"
-                    ? "text-green-600"
-                    : n.sentiment === "bearish"
-                    ? "text-red-500"
-                    : "text-muted-foreground")
-                }
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                sideOffset={6}
+                className="w-[220px] p-0"
               >
-                {n.sentiment.toUpperCase()}
+                <Command className="rounded-md border bg-popover">
+                  <CommandInput
+                    placeholder="Search countries..."
+                    className="h-8 border-b border-border text-[10px]"
+                  />
+                  <CommandList className="max-h-[260px] py-1">
+                    <CommandEmpty className="px-3 py-4 text-center text-[10px] text-muted-foreground">
+                      No countries found
+                    </CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem
+                        value="__all__"
+                        onSelect={() => {
+                          setCountryFilter(null);
+                          setCountryPopoverOpen(false);
+                        }}
+                        className="h-7 px-2.5 text-[10px]"
+                      >
+                        <Check
+                          className={
+                            countryFilter === null
+                              ? "h-3.5 w-3.5"
+                              : "h-3.5 w-3.5 opacity-0"
+                          }
+                        />
+                        <span className="truncate">All countries</span>
+                        <span className="ml-auto pl-2 text-muted-foreground">
+                          {countries.length}
+                        </span>
+                      </CommandItem>
+                      {countries.map((country) => (
+                        <CommandItem
+                          key={country}
+                          value={country}
+                          onSelect={() => {
+                            setCountryFilter(country);
+                            setCountryPopoverOpen(false);
+                          }}
+                          className="h-7 px-2.5 text-[10px]"
+                        >
+                          <Check
+                            className={
+                              countryFilter === country
+                                ? "h-3.5 w-3.5"
+                                : "h-3.5 w-3.5 opacity-0"
+                            }
+                          />
+                          <span className="truncate">{country}</span>
+                          <span className="ml-auto pl-2 text-muted-foreground">
+                            {allItems.filter((item) => item.country === country).length}
+                          </span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            {countryFilter && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground"
+                onClick={() => setCountryFilter(null)}
+                aria-label="Clear country filter"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+          <div className="mx-1 h-4 w-px bg-border" />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 text-[9px]"
+            onClick={() => setRefreshKey((k) => k + 1)}
+          >
+            <Activity className="mr-1 h-3 w-3" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {Object.entries(groupedByCountry).map(([country, items]) => (
+          <div key={country} className="border-b border-border/40">
+            <div className="sticky top-0 z-10 flex items-center gap-2 bg-card/95 px-3 py-1.5 backdrop-blur">
+              <Globe className="h-3 w-3 text-primary" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide">
+                {country}
+              </span>
+              <Badge variant="secondary" className="text-[8px] px-1 py-0">
+                {items.length}
               </Badge>
-              <span className="text-muted-foreground">[{n.source}]</span>
-              <span>{n.headline}</span>
-              {n.tickers.length > 0 && (
-                <span className="text-muted-foreground">
-                  [{n.tickers.join(" ")}]
-                </span>
-              )}
             </div>
-          ))}
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="border-b border-border/30 text-left">
+                  <th className="px-3 pb-1 font-medium text-muted-foreground">Indicator</th>
+                  <th className="pb-1 font-medium text-muted-foreground text-right">Latest</th>
+                  <th className="pb-1 font-medium text-muted-foreground text-right">Prior</th>
+                  <th className="pb-1 font-medium text-muted-foreground text-right">Change</th>
+                  <th className="pb-1 font-medium text-muted-foreground text-right">Forecast</th>
+                  <th className="pb-1 font-medium text-muted-foreground text-right">Date</th>
+                  <th className="pb-1 font-medium text-muted-foreground">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((r) => (
+                  <tr key={r.key} className="border-b border-border/20 hover:bg-muted/30 transition-colors">
+                    <td className="px-3 py-1.5 font-medium">{r.label}</td>
+                    <td className="py-1.5 text-right font-mono font-semibold tabular-nums">
+                      {priceFmt(r.value, r.unit)}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                      {r.priorValue != null ? priceFmt(r.priorValue, r.unit) : "—"}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums">
+                      {r.changePct != null ? (
+                        <span
+                          className={
+                            r.changePct > 0
+                              ? "text-green-500"
+                              : r.changePct < 0
+                              ? "text-red-500"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {r.changePct > 0 ? "+" : ""}{r.changePct.toFixed(2)}%
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                      {r.forecast != null ? priceFmt(r.forecast, r.unit) : "—"}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                      {r.releaseDate ?? r.date}
+                    </td>
+                    <td className="py-1.5 text-muted-foreground">{r.source ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-border bg-muted/20 px-3 py-1.5">
+        <div className="flex items-center gap-1.5 text-[9px]">
+          <Clock className="h-2.5 w-2.5 text-muted-foreground" />
+          <span className="font-semibold text-muted-foreground">Recent Market Events</span>
+          <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-0.5">
+            {data.news.slice(0, 6).map((n) => (
+              <div key={n.headline} className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={
+                    "text-[8px] px-1 py-0 " +
+                    (n.sentiment === "bullish"
+                      ? "text-green-600 border-green-600/30"
+                      : n.sentiment === "bearish"
+                      ? "text-red-500 border-red-500/30"
+                      : "text-muted-foreground")
+                  }
+                >
+                  {n.sentiment}
+                </Badge>
+                <span className="text-muted-foreground">[{n.source}]</span>
+                <span className="truncate max-w-[200px]">{n.headline}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -537,11 +702,12 @@ export function NativeEconomicCalendar({ height = 450 }: { height?: number }) {
 
 // ── Market overview (real macro + market breadth) ───────────────────────────────
 export function NativeMarketOverview({ height = 450 }: { height?: number }) {
+  const [refreshKey, setRefreshKey] = useState(0);
   const { data, isLoading, isError } = useQuery<{
     market: MacroIndicator[];
     breadth: { bullish: number; bearish: number; neutral: number };
   }>({
-    queryKey: ["market-overview"],
+    queryKey: ["market-overview", refreshKey],
     queryFn: async () => {
       const [m, ranks] = await Promise.all([
         fetch("/api/macro").then((r) => r.json()),
@@ -555,25 +721,54 @@ export function NativeMarketOverview({ height = 450 }: { height?: number }) {
       }
       return { market: m.market, breadth };
     },
-    staleTime: 5 * 60_000,
+    staleTime: 60_000, // 1 minute — near real-time
+    refetchInterval: 60_000, // auto-refresh every 60s
   });
 
   if (isLoading) return <Skeleton className="h-full w-full" />;
   if (isError || !data?.market?.length)
     return <NoDataMessage label="No market data" />;
 
+  const lastUpdated = data.market[0]?.date
+    ? new Date(data.market[0].date).toLocaleTimeString()
+    : null;
+
   return (
-    <div className="h-full w-full">
-      <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="flex h-full w-full flex-col">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-primary" />
+          <span className="text-xs font-semibold">Market Overview</span>
+          <Badge variant="outline" className="text-[9px]">
+            {data.market.length} indicators · real-time
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {lastUpdated && (
+            <span className="text-[9px] text-muted-foreground flex items-center gap-1">
+              <Clock className="h-2.5 w-2.5" />
+              Updated {lastUpdated}
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-[9px]"
+            onClick={() => setRefreshKey((k) => k + 1)}
+          >
+            <Activity className="mr-1 h-3 w-3" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+      <div className="grid flex-1 grid-cols-2 gap-2 p-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
         {data.market.map((i) => (
           <MarketCard key={i.key} i={i} />
         ))}
       </div>
-      <div className="border-t border-border pt-2">
-        <div className="mb-1 text-[10px] font-semibold">
-          NASDAQ Breadth (real latest day)
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-[10px]">
+      <div className="flex items-center justify-between border-t border-border px-3 py-1.5">
+        <div className="flex flex-wrap items-center gap-3 text-[10px]">
+          <span className="font-semibold text-muted-foreground">NASDAQ Breadth:</span>
           <BreadthBar label="Advancing" value={data.breadth.bullish} color="#22c55e" />
           <BreadthBar label="Declining" value={data.breadth.bearish} color="#ef4444" />
           <BreadthBar label="Unchanged" value={data.breadth.neutral} color="#94a3b8" />
@@ -585,21 +780,30 @@ export function NativeMarketOverview({ height = 450 }: { height?: number }) {
 
 function MarketCard({ i }: { i: MacroIndicator }) {
   const up = i.changePct == null ? true : i.changePct >= 0;
-  const Icon = i.type === "market" ? DollarSign : Wind;
+  const isIndex = ["sp500", "nasdaq", "dow_jones", "dax", "ftse_100", "nikkei_225", "hang_seng", "bse_sensex", "asx_200", "aex", "swiss_market", "ipc_mexico"].includes(i.key);
+  const Icon = isIndex ? TrendingUp : i.type === "market" ? DollarSign : Wind;
   return (
-    <div className="flex items-center justify-between rounded border border-border bg-card/50 px-2 py-1.5">
+    <div className="flex flex-col justify-between rounded border border-border bg-card/50 px-2 py-1.5">
       <div className="flex items-center gap-1.5">
         <Icon className="h-3 w-3 text-muted-foreground" />
-        <span>{i.label}</span>
+        <span className="truncate">{i.label}</span>
       </div>
       <div className="text-right font-mono">
-        <div>{priceFmt(i.value, i.unit)}</div>
-        {i.changePct != null && (
-          <span className={up ? "text-green-600" : "text-red-500"}>
-            {up ? "+" : ""}
-            {i.changePct.toFixed(2)}%
-          </span>
-        )}
+        <div className={i.changePct != null && i.changePct < 0 ? "text-red-500" : i.changePct != null && i.changePct > 0 ? "text-green-600" : ""}>
+          {priceFmt(i.value, i.unit)}
+        </div>
+        <div className="flex items-center justify-end gap-1 text-[9px]">
+          {i.changePct != null && (
+            <span className={up ? "text-green-600" : "text-red-500"}>
+              {up ? "+" : ""}{i.changePct.toFixed(2)}%
+            </span>
+          )}
+          {i.priorValue != null && (
+            <span className="text-muted-foreground">
+              P: {priceFmt(i.priorValue, i.unit)}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

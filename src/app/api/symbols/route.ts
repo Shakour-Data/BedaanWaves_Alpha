@@ -26,6 +26,10 @@ export async function GET(req: NextRequest) {
       industry: s.industry,
       marketCap: s.marketCap,
       isEtf: s.isEtf,
+      processingStatus: s.processingStatus,
+      batchId: s.batchId,
+      generationId: s.generationId,
+      dataQuality: s.dataQuality,
     })),
   });
 }

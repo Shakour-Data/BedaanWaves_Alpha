@@ -49,9 +49,13 @@ interface SymbolDetail {
   industry: string;
   marketCap: number;
   isEtf: boolean;
-  capturedAt: string;
-  overall: number;
-  grade: string;
+  processingStatus?: string | null;
+  batchId?: string | null;
+  generationId?: string | null;
+  dataQuality?: string | null;
+  capturedAt: string | null;
+  overall: number | null;
+  grade: string | null;
   signals: string[];
   dimensionScores: Record<string, number>;
   coverage: number;
@@ -65,9 +69,11 @@ interface SymbolDetail {
   delta: number | null;
   coefficientVersion: string;
   rawDataHash: string;
-  dataQuality: string;
+  dataQualitySnapshot: string;
   isProcessed: boolean;
   snapshotId: string;
+  message?: string;
+  failedReason?: string | null;
 }
 
 export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChange }: Props) {
@@ -84,16 +90,15 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
         throw new Error(body?.error ?? `HTTP ${r.status}`);
       }
       const data = await r.json();
-      if (typeof data.overall !== "number") {
-        throw new Error("Malformed symbol detail response");
-      }
+      // Accept null overall (symbol without snapshot)
       return data;
     },
     enabled: !!ticker,
   });
 
-  const detail: SymbolDetail | undefined = q.data;
+const detail: SymbolDetail | undefined = q.data;
   const effectiveGrade = detail?.grade ?? "NEUTRAL";
+  const hasSnapshot = detail?.overall !== null && detail?.overall !== undefined;
 
   return (
     <div className="flex flex-col">
@@ -114,16 +119,30 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
                 <span className="text-xs text-muted-foreground">
                   {detail.name}
                 </span>
-                <Badge
-                  variant="outline"
-                  className="text-[10px]"
-                  style={{
-                    color: gradeColor(effectiveGrade as never),
-                    borderColor: gradeColor(effectiveGrade as never),
-                  }}
-                >
-                  {effectiveGrade.replace("_", " ")}
-                </Badge>
+                {detail.processingStatus && detail.processingStatus !== "COEFFICIENTS_TRAINED" && detail.processingStatus !== "UI_VERIFIED" && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px]"
+                    style={{
+                      color: detail.processingStatus === "FAILED" || detail.processingStatus === "INSUFFICIENT_DATA" ? "#ef4444" : "#f59e0b",
+                      borderColor: detail.processingStatus === "FAILED" || detail.processingStatus === "INSUFFICIENT_DATA" ? "#ef4444" : "#f59e0b",
+                    }}
+                  >
+                    {detail.processingStatus.replace("_", " ")}
+                  </Badge>
+                )}
+                {hasSnapshot && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px]"
+                    style={{
+                      color: gradeColor(effectiveGrade as never),
+                      borderColor: gradeColor(effectiveGrade as never),
+                    }}
+                  >
+                    {effectiveGrade.replace("_", " ")}
+                  </Badge>
+                )}
                 {detail.coefficientVersion === "uniform-cold-start" && (
                   <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
                     cold-start (training in progress)
@@ -134,39 +153,53 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
                 </span>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px]">
-                <div>
-                  <span className="text-muted-foreground">Overall:</span>{" "}
-                  <span
-                    className="font-mono text-base font-bold"
-                    style={{ color: gradeColor(effectiveGrade as never) }}
-                  >
-                    {detail.overall.toFixed(2)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Δ:</span>{" "}
-                  {detail.delta !== null ? (
-                    <span
-                      className="font-mono"
-                      style={{ color: detail.delta >= 0 ? "#22c55e" : "#ef4444" }}
-                    >
-                      {detail.delta >= 0 ? "+" : ""}
-                      {detail.delta.toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">90% CI:</span>{" "}
-                  <span className="font-mono">
-                    [{detail.ciLower.toFixed(1)}, {detail.ciUpper.toFixed(1)}]
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Stability:</span>{" "}
-                  <span className="font-mono">{detail.stabilityIndex.toFixed(2)}</span>
-                </div>
+                {hasSnapshot && detail.overall !== null && detail.grade !== null ? (
+                  <>
+                    <div>
+                      <span className="text-muted-foreground">Overall:</span>{" "}
+                      <span
+                        className="font-mono text-base font-bold"
+                        style={{ color: gradeColor(effectiveGrade as never) }}
+                      >
+                        {detail.overall.toFixed(2)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Δ:</span>{" "}
+                      {detail.delta !== null ? (
+                        <span
+                          className="font-mono"
+                          style={{ color: detail.delta >= 0 ? "#22c55e" : "#ef4444" }}
+                        >
+                          {detail.delta >= 0 ? "+" : ""}
+                          {detail.delta.toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">90% CI:</span>{" "}
+                      <span className="font-mono">
+                        [{detail.ciLower.toFixed(1)}, {detail.ciUpper.toFixed(1)}]
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Stability:</span>{" "}
+                      <span className="font-mono">{detail.stabilityIndex.toFixed(2)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-amber-600 dark:text-amber-400 text-[10px]">
+                    ⚠ {detail.message ?? `No score snapshot available — ${detail.processingStatus?.replace("_", " ")}`}
+                  </div>
+                )}
+                {detail.processingStatus && detail.processingStatus !== "COEFFICIENTS_TRAINED" && detail.processingStatus !== "UI_VERIFIED" && (
+                  <div className="text-amber-600 dark:text-amber-400 text-[10px]">
+                    ⚠ No score snapshot available — {detail.processingStatus.replace("_", " ")}
+                    {detail.failedReason && <span>: {detail.failedReason}</span>}
+                  </div>
+                )}
                 <div>
                   <span className="text-muted-foreground">Coverage:</span>{" "}
                   <span className="font-mono">{(detail.coverage * 100).toFixed(0)}%</span>
@@ -331,8 +364,9 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
 }
 
 function ScoreSummary({ ticker, detail, hasSymbol }: { ticker: string; detail: SymbolDetail | undefined; hasSymbol: boolean }) {
-  const currentScore = detail?.overall ?? 0;
-  const currentGrade = detail?.grade ?? "NEUTRAL";
+  const hasSnapshot = detail?.overall !== null && detail?.overall !== undefined;
+  const currentScore = hasSnapshot ? detail!.overall! : 0;
+  const currentGrade = hasSnapshot ? detail!.grade! : "NEUTRAL";
   const dimColors: Record<string, string> = {
     fundamental: "#3b82f6",
     technical: "#22c55e",
@@ -349,6 +383,44 @@ function ScoreSummary({ ticker, detail, hasSymbol }: { ticker: string; detail: S
     macro: "Macro",
     ai: "AI",
   };
+
+  if (!hasSnapshot) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-1">
+        <div className="text-center text-amber-600 dark:text-amber-400">
+          <div className="text-3xl font-mono font-bold">—</div>
+          <div className="text-[10px] text-muted-foreground">
+            {detail?.message ?? `No score snapshot — ${detail?.processingStatus?.replace("_", " ")}`}
+          </div>
+        </div>
+        {detail && (
+          <div className="rounded border border-border bg-card p-2 text-[10px]">
+            <div className="mb-1 font-semibold text-muted-foreground">Provenance</div>
+            <div className="flex items-center justify-between">
+              <span>Version</span>
+              <span className="font-mono">{detail.coefficientVersion}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Data Hash</span>
+              <span className="font-mono">{detail.rawDataHash.slice(0, 8)}…</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Batch ID</span>
+              <span className="font-mono text-[9px]">{detail.batchId?.slice(-12) ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Generation ID</span>
+              <span className="font-mono text-[9px]">{detail.generationId?.slice(-12) ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Data Quality</span>
+              <span className="font-mono text-[9px]">{detail.dataQuality ?? "—"}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center gap-3 py-1">
@@ -400,7 +472,7 @@ function ScoreSummary({ ticker, detail, hasSymbol }: { ticker: string; detail: S
             })}
           </div>
           <div className="rounded border border-border bg-card p-2 text-[10px]">
-            <div className="mb-1 font-semibold text-muted-foreground">Coefficient Info</div>
+            <div className="mb-1 font-semibold text-muted-foreground">Provenance</div>
             <div className="flex items-center justify-between">
               <span>Version</span>
               <span className="font-mono">{detail.coefficientVersion}</span>
@@ -408,6 +480,18 @@ function ScoreSummary({ ticker, detail, hasSymbol }: { ticker: string; detail: S
             <div className="flex items-center justify-between">
               <span>Data Hash</span>
               <span className="font-mono">{detail.rawDataHash.slice(0, 8)}…</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Batch ID</span>
+              <span className="font-mono text-[9px]">{detail.batchId?.slice(-12) ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Generation ID</span>
+              <span className="font-mono text-[9px]">{detail.generationId?.slice(-12) ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Data Quality</span>
+              <span className="font-mono text-[9px]">{detail.dataQuality ?? "—"}</span>
             </div>
             {detail.coefficientVersion === "uniform-cold-start" && (
               <div className="mt-1 text-amber-600 dark:text-amber-400">

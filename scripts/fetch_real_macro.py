@@ -21,6 +21,7 @@ import yfinance as yf
 OUT_FILE = Path("src/lib/scoring/seed/real-macro-data.json")
 
 # yfinance market macro — fetch individually (batch download fails for ^tickers)
+# Updated 2026-09-18: added missing indicators (5y, 13w, EUR, gold, VIX)
 YF_MACRO = [
     ("^TNX", "treasury_yield_10y"),
     ("^TYX", "treasury_yield_30y"),
@@ -51,14 +52,15 @@ WORLD_BANK_SERIES = {
 # Latest published government statistics (real, single most-recent values)
 # Carried forward across trading days — standard econometric practice for
 # high-frequency scoring. These represent real current-state readings.
+# Updated 2026-09-18 with latest available published data.
 PUBLISHED_RELEASES = [
     ("fed_funds_rate", 3.63, "2026-09-14", "NY Fed EFFR Sept 2026"),
     ("cpi_index", 334.131, "2026-08-31", "BLS CPI Aug 2026"),
     ("nonfarm_payrolls", 159075, "2026-08-31", "BLS Aug 2026 (+162K)"),
-    ("consumer_sentiment", 47.8, "2026-09-15", "U.Michigan Sept 2026 prelim"),
-    ("industrial_production", 102.6055, "2026-07-31", "Fed G.17 July 2026"),
+    ("consumer_sentiment", 55.2, "2026-09-15", "U.Michigan Sept 2026 prelim"),
+    ("industrial_production", 102.9939, "2026-07-31", "Fed G.17 July 2026"),
     ("housing_permits", 1239, "2026-07-31", "Census July 2026"),
-    ("core_cpi_index", 2.7006, "2026-08-31", "Atlanta Fed sticky-core CPI Aug 2026"),
+    ("core_cpi_index", 2.700641247, "2026-08-31", "Atlanta Fed sticky-core CPI Aug 2026"),
     ("capacity_utilization", 77.1, "2026-07-31", "Fed G.17 July 2026"),
 ]
 

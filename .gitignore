@@ -119,6 +119,64 @@ seed.out
 /filter_top500.py
 /fix_top_symbols.py
 /test_rankings_query.ts
+/add_failed_reason.py
+/backfill.py
+/backfill2.py
+/backfill_prisma.py
+/backfill_prisma2.py
+/check_all_fetchedat.py
+/check_empty_fetchedat.py
+/check_fetchedat.py
+/check_index50.py
+/check_batchmanifest.mjs
+/check_manifest.mjs
+/check_results.mjs
+/check_schema.mjs
+/check_table.mjs
+/create_marketbar.mjs
+/fix_marketbar.mjs
+/inspect2.py
+/inspect_db.py
+/test_marketbar.mjs
+/test_db.js
+/test_db.mjs
+/test_models.mjs
+/verify.py
+/verify2.py
+/verify3.py
+/verify4.py
+scripts/check_db.mts
+scripts/check_db.ts
+scripts/fetch_nasdaq_batch.py
+
+# Temp/backup files
+/Add100Symbol.txt
+/migrate.sql
+/package-lock.json
+src/lib/scoring/seed/nasdaq-batch-1.json.previous
+scripts/nasdaq-batch-1-manifest.json.previous
+scripts/__pycache__/
+
+# NASDAQ batch pipeline data (large, regenerable)
+src/lib/scoring/seed/nasdaq-batch-1.json
+scripts/nasdaq-batch-1-manifest.json
+
+# NASDAQ batch pipeline tooling (one-off ingestion/dev scripts)
+/scripts/add_sources.cjs
+/scripts/apply_migration.js
+/scripts/apply_migration.mjs
+/scripts/check_gen.mjs
+/scripts/fetch_intl_econ.cjs
+/scripts/fetch_macro_full.cjs
+/scripts/fetch_macro_node.cjs
+/scripts/find_next_batch.mts
+/scripts/fix_legacy.mjs
+/scripts/ingest_nasdaq_batch.ts
+/scripts/verify_migration.mjs
+/scripts/verify_schema.mjs
+
+# Prisma migration directory (generated; track only via git)
+prisma/migrations/
 
 # Generated symbol lists
 scripts/top_symbols.json

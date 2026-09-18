@@ -1,18 +1,59 @@
 // GET /api/scores/[symbol] — latest snapshot for a symbol
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchSymbolDetail } from "@/lib/scoring/queries";
 import { gradeFor } from "@/lib/scoring/transforms";
 
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
   const { symbol } = await params;
-  const detail = await fetchSymbolDetail(symbol);
+  const generationId = req.nextUrl.searchParams.get("generationId") ?? undefined;
+  const detail = await fetchSymbolDetail(symbol, generationId);
   if (!detail) {
     return NextResponse.json({ error: "Symbol not found" }, { status: 404 });
   }
   const { symbol: sym, snapshot: s, prevOverall } = detail;
+  
+  // If no snapshot yet, return symbol info with processing status
+  if (!s) {
+    return NextResponse.json({
+      ticker: sym.ticker,
+      name: sym.name ?? "",
+      sector: sym.sector ?? "",
+      industry: sym.industry ?? "",
+      marketCap: sym.marketCap ?? 0,
+      isEtf: sym.isEtf ?? false,
+      processingStatus: sym.processingStatus,
+      batchId: sym.batchId,
+      generationId: sym.generationId,
+      dataQuality: sym.dataQuality,
+      capturedAt: null,
+      overall: null,
+      grade: null,
+      signals: [],
+      dimensionScores: {},
+      subDimensionScores: {},
+      aspectScores: {},
+      subAspectScores: {},
+      coverage: 0,
+      ciLower: 0,
+      ciUpper: 0,
+      stabilityIndex: 0,
+      price: 0,
+      priceChange: 0,
+      volume: 0,
+      prevOverall: null,
+      delta: null,
+      coefficientVersion: "",
+      rawDataHash: "",
+      dataQualitySnapshot: "PENDING",
+      isProcessed: false,
+      snapshotId: "",
+      message: `Symbol is ${sym.processingStatus?.toLowerCase().replace("_", " ")} — no score snapshot available yet`,
+    });
+  }
+  
   const overall = s.overall ?? 0;
   return NextResponse.json({
     ticker: sym.ticker,
@@ -21,6 +62,10 @@ export async function GET(
     industry: sym.industry ?? "",
     marketCap: sym.marketCap ?? 0,
     isEtf: sym.isEtf ?? false,
+    processingStatus: sym.processingStatus,
+    batchId: sym.batchId,
+    generationId: sym.generationId,
+    dataQuality: sym.dataQuality,
     capturedAt: s.capturedAt?.toISOString() ?? "",
     overall,
     grade: s.grade || gradeFor(overall),
@@ -40,7 +85,7 @@ export async function GET(
     delta: prevOverall !== null && prevOverall !== undefined ? overall - prevOverall : null,
     coefficientVersion: s.coefficientVersion ?? "",
     rawDataHash: s.rawDataHash ?? "",
-    dataQuality: s.dataQuality ?? "VALIDATED",
+    dataQualitySnapshot: s.dataQuality ?? "VALIDATED",
     isProcessed: s.isProcessed ?? false,
     snapshotId: s.id ?? "",
   });

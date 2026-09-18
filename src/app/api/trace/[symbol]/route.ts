@@ -1,15 +1,19 @@
 // GET /api/trace/[symbol] — data provenance / lineage
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchTrace } from "@/lib/scoring/queries";
 
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
   const { symbol } = await params;
-  const res = await fetchTrace(symbol);
+  const generationId = req.nextUrl.searchParams.get("generationId") ?? undefined;
+  const res = await fetchTrace(symbol, generationId);
   if (!res) {
-    return NextResponse.json({ error: "Symbol not found" }, { status: 404 });
+    return NextResponse.json({ 
+      error: "Symbol not found or no trace data available",
+      symbol: symbol.toUpperCase(),
+    }, { status: 404 });
   }
   return NextResponse.json(res);
 }

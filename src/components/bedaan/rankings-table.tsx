@@ -61,6 +61,10 @@ interface RankingRow {
   delta: number | null;
   dimensionScores: Record<string, number>;
   coefficientVersion: string;
+  processingStatus?: string | null;
+  batchId?: string | null;
+  generationId?: string | null;
+  dataQuality?: string | null;
 }
 
 type ColumnKind = "text" | "number";
@@ -217,6 +221,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [search, setSearch] = useState("");
   const [sector, setSector] = useState("All");
   const [grade, setGrade] = useState("All");
+  const [processingStatus, setProcessingStatus] = useState("All");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [sort, setSort] = useState("overall");
@@ -246,8 +251,10 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
     return ["All", ...list];
   }, [statusQ.data]);
 
+  const statuses = ["All", "COEFFICIENTS_TRAINED", "UI_VERIFIED", "SCORED", "METRICS_READY", "RAW_VALIDATED", "RAW_FETCHED", "REGISTERED", "PARTIAL", "FAILED", "INSUFFICIENT_DATA"];
+
   const rankingsQ = useQuery({
-    queryKey: ["rankings", { search, sector, grade, page, pageSize, sort, order, columnFilters }],
+    queryKey: ["rankings", { search, sector, grade, processingStatus, page, pageSize, sort, order, columnFilters }],
     queryFn: async () => {
       const sp = new URLSearchParams({
         page: String(page),
@@ -258,6 +265,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
       if (search) sp.set("search", search);
       if (sector !== "All") sp.set("sector", sector);
       if (grade !== "All") sp.set("grade", grade);
+      if (processingStatus !== "All") sp.set("processingStatus", processingStatus);
       if (activeColumnFilters.length > 0) {
         sp.set("columnFilters", JSON.stringify(activeColumnFilters));
       }
@@ -313,6 +321,18 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
             {GRADES.map((g) => (
               <SelectItem key={g} value={g} className="text-[10px]">
                 {g === "All" ? "All grades" : g.replace("_", " ")}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={processingStatus} onValueChange={(v) => { setProcessingStatus(v); setPage(1); }}>
+          <SelectTrigger className="h-7 w-[180px] text-[10px]">
+            <SelectValue placeholder="Processing Status" />
+          </SelectTrigger>
+          <SelectContent className="max-h-60">
+            {["All", "COEFFICIENTS_TRAINED", "UI_VERIFIED", "SCORED", "METRICS_READY", "RAW_VALIDATED", "RAW_FETCHED", "REGISTERED", "PARTIAL", "FAILED", "INSUFFICIENT_DATA"].map((s) => (
+              <SelectItem key={s} value={s} className="text-[10px]">
+                {s === "All" ? "All statuses" : s.replace("_", " ")}
               </SelectItem>
             ))}
           </SelectContent>
@@ -429,19 +449,23 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
                 </th>
               ))}
               <th className="hidden px-2 py-1.5 text-right lg:table-cell">Cov</th>
+              <th className="hidden px-2 py-1.5 text-left lg:table-cell">Status</th>
+              <th className="hidden px-2 py-1.5 text-left xl:table-cell">Batch</th>
+              <th className="hidden px-2 py-1.5 text-left xl:table-cell">Gen</th>
+              <th className="hidden px-2 py-1.5 text-left xl:table-cell">Quality</th>
             </tr>
           </thead>
           <tbody>
             {rankingsQ.isLoading && (
               <tr>
-                <td colSpan={13}>
+                <td colSpan={17}>
                   <Skeleton className="h-8 w-full" />
                 </td>
               </tr>
             )}
             {!rankingsQ.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={13} className="px-2 py-8 text-center text-muted-foreground">
+                <td colSpan={17} className="px-2 py-8 text-center text-muted-foreground">
                   No symbols match the current filters.
                 </td>
               </tr>
@@ -513,6 +537,22 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
                   })}
                   <td className="hidden px-2 py-1.5 text-right font-mono text-[10px] text-muted-foreground lg:table-cell">
                     {(r.coverage * 100).toFixed(0)}%
+                  </td>
+                  <td className="hidden px-2 py-1.5 text-left lg:table-cell">
+                    {r.processingStatus && (
+                      <Badge variant="outline" className="text-[8px]">
+                        {r.processingStatus.replace("_", " ")}
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="hidden px-2 py-1.5 text-left xl:table-cell text-[9px] text-muted-foreground">
+                    {r.batchId?.slice(-12) ?? "—"}
+                  </td>
+                  <td className="hidden px-2 py-1.5 text-left xl:table-cell text-[9px] text-muted-foreground">
+                    {r.generationId?.slice(-12) ?? "—"}
+                  </td>
+                  <td className="hidden px-2 py-1.5 text-left xl:table-cell text-[9px] text-muted-foreground">
+                    {r.dataQuality ?? "—"}
                   </td>
                 </tr>
               );

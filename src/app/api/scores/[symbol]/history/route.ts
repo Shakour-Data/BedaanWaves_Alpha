@@ -8,9 +8,15 @@ export async function GET(
 ) {
   const { symbol } = await params;
   const range = req.nextUrl.searchParams.get("range") ?? "3M";
-  const history = await fetchSymbolHistory(symbol, range);
-  if (!history) {
-    return NextResponse.json({ error: "Symbol not found" }, { status: 404 });
+  const generationId = req.nextUrl.searchParams.get("generationId") ?? undefined;
+  const history = await fetchSymbolHistory(symbol, range, generationId);
+  if (!history || history.length === 0) {
+    return NextResponse.json({ 
+      error: "Symbol not found or no history available",
+      symbol: symbol.toUpperCase(),
+      range,
+      points: [],
+    }, { status: 404 });
   }
   return NextResponse.json({ symbol: symbol.toUpperCase(), range, points: history });
 }

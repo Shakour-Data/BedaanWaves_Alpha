@@ -33,6 +33,8 @@ export async function GET(req: NextRequest) {
       ? null
       : sp.get("isEtf") === "true",
     columnFilters,
+    generationId: sp.get("generationId") ?? undefined,
+    processingStatus: sp.get("processingStatus") ?? undefined,
   });
   return NextResponse.json(res);
 }

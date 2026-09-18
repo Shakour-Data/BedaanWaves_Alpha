@@ -1,14 +1,14 @@
 // GET /api/candles/[symbol]?range=3M — real OHLCV candles from yfinance (spec §1.1)
 // Used by the native candlestick chart. No synthetic data — every bar is real.
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getCandles, getTickerMeta } from "@/lib/real-store";
 
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
   const { symbol } = await params;
-  const range = (new URL(_req.url).searchParams.get("range") ?? "3M").toUpperCase();
+  const range = (req.nextUrl.searchParams.get("range") ?? "3M").toUpperCase();
   const bars = getCandles(symbol, range);
   const meta = getTickerMeta(symbol);
   if (bars.length === 0) {
