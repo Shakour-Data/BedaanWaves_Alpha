@@ -165,6 +165,8 @@ scripts/nasdaq-batch-1-manifest.json
 /scripts/add_sources.cjs
 /scripts/apply_migration.js
 /scripts/apply_migration.mjs
+/scripts/check_batch1.ts
+/scripts/check_batches.ts
 /scripts/check_gen.mjs
 /scripts/fetch_intl_econ.cjs
 /scripts/fetch_macro_full.cjs
@@ -172,6 +174,7 @@ scripts/nasdaq-batch-1-manifest.json
 /scripts/find_next_batch.mts
 /scripts/fix_legacy.mjs
 /scripts/ingest_nasdaq_batch.ts
+/scripts/update_manifest.ts
 /scripts/verify_migration.mjs
 /scripts/verify_schema.mjs
 

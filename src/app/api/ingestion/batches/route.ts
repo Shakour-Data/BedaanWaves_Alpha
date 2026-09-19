@@ -2,6 +2,15 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 
+function safeJsonParse(value: string | null): unknown {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value; // Return as-is if not valid JSON
+  }
+}
+
 export async function GET() {
   const batches = await db.batchManifest.findMany({
     orderBy: { startedAt: "desc" },
@@ -25,7 +34,7 @@ export async function GET() {
       coefficientsWritten: b.coefficientsWritten,
       trainingRunsWritten: b.trainingRunsWritten,
       generationId: b.generationId,
-      validationSummary: b.validationSummary ? JSON.parse(b.validationSummary) : null,
+      validationSummary: safeJsonParse(b.validationSummary),
       errorDetails: b.errorDetails,
     })),
   });
