@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Columns,
   Download,
   Filter,
   Search,
@@ -29,7 +30,7 @@ import {
 } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
-import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
+import { DIMENSION_KEYS, DIMENSION_META, type DimensionKey } from "@/lib/scoring/metric-universe";
 import { gradeColor } from "@/lib/scoring/transforms";
 import type {
   RankingColumnFilter,
@@ -75,7 +76,7 @@ interface ColumnDefinition {
   shortLabel?: string;
   kind: ColumnKind;
   align?: "left" | "right";
-  className?: string;
+  responsiveClass?: string;
 }
 
 const GRADES = ["All", "STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"];
@@ -102,24 +103,33 @@ const NUMBER_OPERATORS: Array<{ value: RankingFilterOperator; label: string }> =
 ];
 
 const COLUMN_DEFINITIONS: ColumnDefinition[] = [
-  { key: "overall", label: "Overall", kind: "number", align: "right" },
+  { key: "rank", label: "#", kind: "number", align: "right" },
   { key: "ticker", label: "Ticker", kind: "text", align: "left" },
+  { key: "overall", label: "Overall", kind: "number", align: "right" },
   { key: "delta", label: "Δ", kind: "number", align: "right" },
   { key: "grade", label: "Grade", kind: "text", align: "right" },
   { key: "price", label: "Price", kind: "number", align: "right" },
   { key: "priceChange", label: "Δ%", kind: "number", align: "right" },
-  { key: "marketCap", label: "Mkt Cap", kind: "number", align: "right" },
-  { key: "coverage", label: "Coverage", kind: "number", align: "right" },
+  { key: "marketCap", label: "Mkt Cap", kind: "number", align: "right", responsiveClass: "hidden md:table-cell" },
+  { key: "coverage", label: "Coverage", kind: "number", align: "right", responsiveClass: "hidden lg:table-cell" },
   ...DIMENSION_KEYS.map(
     (d) =>
       ({
         key: `dimension.${d}` as RankingColumnKey,
         label: DIMENSION_META[d].label,
+        shortLabel: DIMENSION_META[d].label.slice(0, 4),
         kind: "number" as const,
         align: "right" as const,
+        responsiveClass: "hidden md:table-cell",
       }) as ColumnDefinition,
   ),
+  { key: "processingStatus", label: "Status", kind: "text", align: "left", responsiveClass: "hidden lg:table-cell" },
+  { key: "batchId", label: "Batch", kind: "text", align: "left", responsiveClass: "hidden xl:table-cell" },
+  { key: "generationId", label: "Gen", kind: "text", align: "left", responsiveClass: "hidden xl:table-cell" },
+  { key: "dataQuality", label: "Quality", kind: "text", align: "left", responsiveClass: "hidden xl:table-cell" },
 ];
+
+const ALL_COLUMN_KEYS = COLUMN_DEFINITIONS.map((column) => column.key);
 
 function ColumnFilterPopover({
   column,
@@ -217,6 +227,122 @@ function ColumnFilterPopover({
   );
 }
 
+function RankingCell({ column, row }: { column: ColumnDefinition; row: RankingRow }) {
+  const alignmentClass =
+    column.align === "right"
+      ? "text-right"
+      : column.align === "left"
+        ? "text-left"
+        : "";
+  const responsiveClass = column.responsiveClass ?? "";
+
+  switch (column.key) {
+    case "rank":
+      return <td className={`px-2 py-1.5 ${alignmentClass} ${responsiveClass}`}>{row.rank}</td>;
+    case "ticker":
+      return (
+        <td className="px-2 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="font-bold">{row.ticker}</span>
+            {row.coefficientVersion === "uniform-cold-start" && (
+              <span className="rounded bg-amber-100 px-1 text-[8px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                cold
+              </span>
+            )}
+          </div>
+          <div className="text-[9px] text-muted-foreground">{row.name.slice(0, 22)}</div>
+        </td>
+      );
+    case "overall":
+      return (
+        <td className={`px-2 py-1.5 ${alignmentClass} ${responsiveClass}`}>
+          <span className="font-mono font-bold" style={{ color: gradeColor(row.grade as never) }}>
+            {row.overall.toFixed(1)}
+          </span>
+        </td>
+      );
+    case "delta":
+      return (
+        <td className={`px-2 py-1.5 font-mono text-[10px] ${alignmentClass} ${responsiveClass}`}>
+          {row.delta !== null ? (
+            <span style={{ color: row.delta >= 0 ? "#22c55e" : "#ef4444" }}>
+              {row.delta >= 0 ? "+" : ""}
+              {row.delta.toFixed(2)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </td>
+      );
+    case "grade":
+      return (
+        <td className={`px-2 py-1.5 text-[9px] ${alignmentClass} ${responsiveClass}`} style={{ color: gradeColor(row.grade as never) }}>
+          {row.grade.replace("_", " ").slice(0, 8)}
+        </td>
+      );
+    case "price": {
+      const livePrice = (row as unknown as Record<string, unknown>).livePrice as number | undefined;
+      const priceDisplay = livePrice ?? row.price;
+      return (
+        <td className={`px-2 py-1.5 font-mono ${alignmentClass} ${responsiveClass}`}>
+          ${priceDisplay.toFixed(2)}
+          {livePrice != null && (
+            <span className="ml-1 rounded px-0.5 py-0 text-[8px] bg-green-500/20 text-green-400 font-mono">LIVE</span>
+          )}
+        </td>
+      );
+    }
+    case "priceChange":
+      return (
+        <td className={`px-2 py-1.5 font-mono ${alignmentClass} ${responsiveClass}`} style={{ color: row.priceChange >= 0 ? "#22c55e" : "#ef4444" }}>
+          {row.priceChange >= 0 ? "+" : ""}
+          {row.priceChange.toFixed(2)}%
+        </td>
+      );
+    case "marketCap":
+      return (
+        <td className={`px-2 py-1.5 font-mono ${alignmentClass} ${responsiveClass}`}>
+          {row.marketCap > 0
+            ? (row.marketCap >= 1e12 ? (row.marketCap / 1e12).toFixed(2) + "T" : (row.marketCap / 1e9).toFixed(1) + "B")
+            : "—"}
+        </td>
+      );
+    case "coverage":
+      return (
+        <td className={`px-2 py-1.5 font-mono text-[10px] text-muted-foreground ${alignmentClass} ${responsiveClass}`}>
+          {(row.coverage * 100).toFixed(0)}%
+        </td>
+      );
+    case "processingStatus":
+      return (
+        <td className={`px-2 py-1.5 ${alignmentClass} ${responsiveClass}`}>
+          {row.processingStatus && (
+            <Badge variant="outline" className="text-[8px]">
+              {row.processingStatus.replace("_", " ")}
+            </Badge>
+          )}
+        </td>
+      );
+    case "batchId":
+      return <td className={`px-2 py-1.5 text-left text-[9px] text-muted-foreground ${responsiveClass}`}>{row.batchId?.slice(-12) ?? "—"}</td>;
+    case "generationId":
+      return <td className={`px-2 py-1.5 text-left text-[9px] text-muted-foreground ${responsiveClass}`}>{row.generationId?.slice(-12) ?? "—"}</td>;
+    case "dataQuality":
+      return <td className={`px-2 py-1.5 text-left text-[9px] text-muted-foreground ${responsiveClass}`}>{row.dataQuality ?? "—"}</td>;
+    default:
+      if (column.key.startsWith("dimension.")) {
+        const dimension = column.key.slice("dimension.".length) as DimensionKey;
+        const value = row.dimensionScores[dimension] ?? 50;
+        return (
+          <td className={`px-2 py-1.5 font-mono ${alignmentClass} ${responsiveClass}`} style={{ color: value >= 60 ? "#22c55e" : value <= 40 ? "#ef4444" : "#475569" }}>
+            {value.toFixed(0)}
+          </td>
+        );
+      }
+      return <td className={`px-2 py-1.5 ${responsiveClass}`} />;
+  }
+}
+
 export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [search, setSearch] = useState("");
   const [sector, setSector] = useState("All");
@@ -224,18 +350,46 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [processingStatus, setProcessingStatus] = useState("All");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
-  const [sort, setSort] = useState("overall");
+  const [sort, setSort] = useState<RankingColumnKey>("overall");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [columnFilters, setColumnFilters] = useState<
-    Partial<Record<string, RankingColumnFilter>>
+    Partial<Record<RankingColumnKey, RankingColumnFilter>>
   >({});
-  const [openPopover, setOpenPopover] = useState<string | null>(null);
+  const [openPopover, setOpenPopover] = useState<RankingColumnKey | null>(null);
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<RankingColumnKey[]>(() => {
+    if (typeof window === "undefined") return ALL_COLUMN_KEYS;
+    try {
+      const saved = window.localStorage.getItem("rankings-visible-columns");
+      const parsed: unknown = saved ? JSON.parse(saved) : null;
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every((key) => ALL_COLUMN_KEYS.includes(key as RankingColumnKey))
+      ) {
+        return parsed as RankingColumnKey[];
+      }
+    } catch {
+      return ALL_COLUMN_KEYS;
+    }
+    return ALL_COLUMN_KEYS;
+  });
 
   const activeColumnFilters = useMemo(
     () =>
       Object.values(columnFilters).filter(Boolean) as RankingColumnFilter[],
     [columnFilters],
   );
+  const visibleColumnKeySet = useMemo(
+    () => new Set(visibleColumnKeys),
+    [visibleColumnKeys],
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "rankings-visible-columns",
+      JSON.stringify(visibleColumnKeys),
+    );
+  }, [visibleColumnKeys]);
 
   // Fetch market status to populate sector filter
   const statusQ = useQuery({
@@ -285,6 +439,9 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const exportJson = () => {
     window.open("/api/export?format=json", "_blank");
   };
+  const visibleColumnCount = COLUMN_DEFINITIONS.filter((column) =>
+    visibleColumnKeySet.has(column.key),
+  ).length;
 
   return (
     <div className="flex h-full flex-col gap-2">
@@ -343,6 +500,49 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
         <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={exportJson} title="Export JSON">
           <Download className="h-3 w-3" /> JSON
         </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" title="Show or hide columns">
+              <Columns className="h-3 w-3" /> Columns
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-56 p-2">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <Label className="text-[10px] font-medium">Columns</Label>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1.5 text-[9px]"
+                onClick={() => setVisibleColumnKeys(ALL_COLUMN_KEYS)}
+              >
+                Reset
+              </Button>
+            </div>
+            <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+              {COLUMN_DEFINITIONS.map((column) => (
+                <label key={column.key} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[10px] hover:bg-muted/60">
+                  <input
+                    type="checkbox"
+                    checked={visibleColumnKeySet.has(column.key)}
+                    disabled={
+                      visibleColumnKeys.length === 1 &&
+                      visibleColumnKeySet.has(column.key)
+                    }
+                    onChange={(event) => {
+                      setVisibleColumnKeys((current) =>
+                        event.target.checked
+                          ? [...current, column.key]
+                          : current.filter((key) => key !== column.key),
+                      );
+                    }}
+                    className="h-3 w-3 accent-primary"
+                  />
+                  <span>{column.label}</span>
+                </label>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {/* Sort & filter controls */}
@@ -427,133 +627,70 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto rounded border border-border bg-card">
-        <table className="w-full text-[11px]">
+      <div className="flex-1 overflow-x-auto overflow-y-auto rounded border border-border bg-card">
+        <table className="w-full min-w-max text-[11px]">
           <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur">
             <tr className="text-left text-[10px] text-muted-foreground">
-              <th className="px-2 py-1.5">#</th>
-              <th className="px-2 py-1.5">Ticker</th>
-              <th className="px-2 py-1.5 text-right">Overall</th>
-              <th className="px-2 py-1.5 text-right">Δ</th>
-              <th className="px-2 py-1.5 text-right">Grade</th>
-              <th className="px-2 py-1.5 text-right">Price</th>
-              <th className="px-2 py-1.5 text-right">Δ%</th>
-              {DIMENSION_KEYS.map((d) => (
-                <th
-                  key={d}
-                  className="hidden px-2 py-1.5 text-right md:table-cell"
-                  style={{ color: DIMENSION_META[d].color }}
-                  title={DIMENSION_META[d].label}
-                >
-                  {DIMENSION_META[d].label.slice(0, 4)}
-                </th>
-              ))}
-              <th className="hidden px-2 py-1.5 text-right lg:table-cell">Cov</th>
-              <th className="hidden px-2 py-1.5 text-left lg:table-cell">Status</th>
-              <th className="hidden px-2 py-1.5 text-left xl:table-cell">Batch</th>
-              <th className="hidden px-2 py-1.5 text-left xl:table-cell">Gen</th>
-              <th className="hidden px-2 py-1.5 text-left xl:table-cell">Quality</th>
+              {COLUMN_DEFINITIONS.map((column) =>
+                visibleColumnKeySet.has(column.key) ? (
+                  <th
+                    key={column.key}
+                    className={`px-2 py-1.5 ${
+                      column.align === "right"
+                        ? "text-right"
+                        : column.align === "left"
+                          ? "text-left"
+                          : ""
+                    } ${column.responsiveClass ?? ""}`}
+                    style={
+                      column.key.startsWith("dimension.")
+                        ? {
+                            color:
+                              DIMENSION_META[
+                                column.key.slice("dimension.".length) as DimensionKey
+                              ].color,
+                          }
+                        : undefined
+                    }
+                    title={column.label}
+                  >
+                    {column.shortLabel ?? column.label}
+                  </th>
+                ) : null,
+              )}
             </tr>
           </thead>
           <tbody>
             {rankingsQ.isLoading && (
               <tr>
-                <td colSpan={17}>
+                <td colSpan={visibleColumnCount}>
                   <Skeleton className="h-8 w-full" />
                 </td>
               </tr>
             )}
             {!rankingsQ.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={17} className="px-2 py-8 text-center text-muted-foreground">
+                <td colSpan={visibleColumnCount} className="px-2 py-8 text-center text-muted-foreground">
                   No symbols match the current filters.
                 </td>
               </tr>
             )}
-            {rows.map((r) => {
-              const selected = selectedTicker === r.ticker;
+            {rows.map((row) => {
+              const selected = selectedTicker === row.ticker;
               return (
                 <tr
-                  key={r.ticker}
-                  onClick={() => onSelect(r.ticker)}
+                  key={row.ticker}
+                  onClick={() => onSelect(row.ticker)}
                   className={`cursor-pointer border-b border-border/30 hover:bg-muted/50 ${
                     selected ? "bg-primary/10" : ""
                   }`}
                 >
-                  <td className="px-2 py-1.5 text-muted-foreground">{r.rank}</td>
-                  <td className="px-2 py-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold">{r.ticker}</span>
-                      {r.coefficientVersion === "uniform-cold-start" && (
-                        <span className="rounded bg-amber-100 px-1 text-[8px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                          cold
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">{r.name.slice(0, 22)}</div>
-                  </td>
-                  <td className="px-2 py-1.5 text-right">
-                    <span
-                      className="font-mono font-bold"
-                      style={{ color: gradeColor(r.grade as never) }}
-                    >
-                      {r.overall.toFixed(1)}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-right font-mono text-[10px]">
-                    {r.delta !== null ? (
-                      <span style={{ color: r.delta >= 0 ? "#22c55e" : "#ef4444" }}>
-                        {r.delta >= 0 ? "+" : ""}
-                        {r.delta.toFixed(2)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-1.5 text-right text-[9px]" style={{ color: gradeColor(r.grade as never) }}>
-                    {r.grade.replace("_", " ").slice(0, 8)}
-                  </td>
-                  <td className="px-2 py-1.5 text-right font-mono">${r.price.toFixed(2)}</td>
-                  <td
-                    className="px-2 py-1.5 text-right font-mono"
-                    style={{ color: r.priceChange >= 0 ? "#22c55e" : "#ef4444" }}
-                  >
-                    {r.priceChange >= 0 ? "+" : ""}
-                    {r.priceChange.toFixed(2)}%
-                  </td>
-                  {DIMENSION_KEYS.map((d) => {
-                    const v = r.dimensionScores[d] ?? 50;
-                    return (
-                      <td
-                        key={d}
-                        className="hidden px-2 py-1.5 text-right font-mono md:table-cell"
-                        style={{
-                          color: v >= 60 ? "#22c55e" : v <= 40 ? "#ef4444" : "#475569",
-                        }}
-                      >
-                        {v.toFixed(0)}
-                      </td>
-                    );
-                  })}
-                  <td className="hidden px-2 py-1.5 text-right font-mono text-[10px] text-muted-foreground lg:table-cell">
-                    {(r.coverage * 100).toFixed(0)}%
-                  </td>
-                  <td className="hidden px-2 py-1.5 text-left lg:table-cell">
-                    {r.processingStatus && (
-                      <Badge variant="outline" className="text-[8px]">
-                        {r.processingStatus.replace("_", " ")}
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="hidden px-2 py-1.5 text-left xl:table-cell text-[9px] text-muted-foreground">
-                    {r.batchId?.slice(-12) ?? "—"}
-                  </td>
-                  <td className="hidden px-2 py-1.5 text-left xl:table-cell text-[9px] text-muted-foreground">
-                    {r.generationId?.slice(-12) ?? "—"}
-                  </td>
-                  <td className="hidden px-2 py-1.5 text-left xl:table-cell text-[9px] text-muted-foreground">
-                    {r.dataQuality ?? "—"}
-                  </td>
+                  {COLUMN_DEFINITIONS.map(
+                    (column) =>
+                      visibleColumnKeySet.has(column.key) && (
+                        <RankingCell key={column.key} column={column} row={row} />
+                      ),
+                  )}
                 </tr>
               );
             })}

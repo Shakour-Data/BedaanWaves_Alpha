@@ -33,13 +33,13 @@ echo "[$(date)] [2c/4] Adding source attribution..." | tee -a "$LOG"
 node scripts/add_sources.cjs >> "$LOG" 2>&1 || true
 
 # Step 3: Fetch latest real news (z-ai web-search)
-echo "[$(date)] [3/4] Fetching latest real news via web-search..." | tee -a "$LOG"
+echo "[$(date)] [3/5] Fetching latest real news via web-search..." | tee -a "$LOG"
 timeout 180 python3 scripts/fetch_real_news.py >> "$LOG" 2>&1 || {
     echo "[$(date)] WARNING: news fetch failed, continuing with existing news" | tee -a "$LOG"
 }
 
 # Step 4: Re-run V2 scoring engine + per-symbol coefficient training
-echo "[$(date)] [4/4] Re-scoring + re-training coefficients..." | tee -a "$LOG"
+echo "[$(date)] [4/5] Re-scoring + re-training coefficients..." | tee -a "$LOG"
 timeout 300 npx tsx scripts/seed.ts >> "$LOG" 2>&1 || {
     echo "[$(date)] ERROR: re-scoring failed!" | tee -a "$LOG"
     exit 1

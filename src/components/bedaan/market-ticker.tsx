@@ -11,6 +11,8 @@ interface TickerItem {
   priceChange: number;
   overall: number;
   grade: string;
+  livePrice?: number | null;
+  livePriceChange?: number | null;
 }
 
 interface Props {
@@ -70,36 +72,43 @@ export function MarketTicker({ onSymbolClick }: Props) {
             Loading ticker…
           </span>
         ) : (
-          doubled.map((it, i) => (
-            <button
-              key={`${it.ticker}-${i}`}
-              onClick={() => onSymbolClick?.(it.ticker)}
-              className="group inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] hover:bg-background/60"
-              title={`${it.name} · overall ${it.overall.toFixed(1)} (${it.grade})`}
-            >
-              <span className="font-bold">{it.ticker}</span>
-              <span className="font-mono">${it.price.toFixed(2)}</span>
-              <span
-                className="font-mono"
-                style={{
-                  color: it.priceChange >= 0 ? "#22c55e" : "#ef4444",
-                }}
+          doubled.map((it, i) => {
+            const displayPrice = it.livePrice ?? it.price;
+            const displayChange = it.livePriceChange ?? it.priceChange;
+            return (
+              <button
+                key={`${it.ticker}-${i}`}
+                onClick={() => onSymbolClick?.(it.ticker)}
+                className="group inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] hover:bg-background/60"
+                title={`${it.name} · overall ${it.overall.toFixed(1)} (${it.grade})`}
               >
-                {it.priceChange >= 0 ? "▲" : "▼"}
-                {Math.abs(it.priceChange).toFixed(2)}%
-              </span>
-              <span
-                className="rounded px-1 font-mono text-[10px]"
-                style={{
-                  background: gradeColor(it.grade as never) + "22",
-                  color: gradeColor(it.grade as never),
-                }}
-              >
-                {it.overall.toFixed(0)} {it.grade.replace("_", " ").slice(0, 4)}
-              </span>
-              <span className="text-muted-foreground/30">·</span>
-            </button>
-          ))
+                <span className="font-bold">{it.ticker}</span>
+                <span className="font-mono">${displayPrice.toFixed(2)}</span>
+                <span
+                  className="font-mono"
+                  style={{
+                    color: displayChange >= 0 ? "#22c55e" : "#ef4444",
+                  }}
+                >
+                  {displayChange >= 0 ? "▲" : "▼"}
+                  {Math.abs(displayChange).toFixed(2)}%
+                </span>
+                {it.livePrice != null && (
+                  <span className="rounded px-0.5 py-0 text-[7px] bg-green-500/20 text-green-400 font-mono">LIVE</span>
+                )}
+                <span
+                  className="rounded px-1 font-mono text-[10px]"
+                  style={{
+                    background: gradeColor(it.grade as never) + "22",
+                    color: gradeColor(it.grade as never),
+                  }}
+                >
+                  {it.overall.toFixed(0)} {it.grade.replace("_", " ").slice(0, 4)}
+                </span>
+                <span className="text-muted-foreground/30">·</span>
+              </button>
+            );
+          })
         )}
       </div>
     </div>

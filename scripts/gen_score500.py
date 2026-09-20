@@ -1,7 +1,7 @@
 import json, sqlite3, os
 
 # Get top 500 tickers from DB
-conn = sqlite3.connect('C:/Users/Administrator/Documents/BedaanWaves_Alpha/prisma/db/custom.db')
+conn = sqlite3.connect('C:/Users/Administrator/Documents/BedaanWaves_Alpha/db/custom.db')
 cursor = conn.cursor()
 cursor.execute('SELECT ticker, name, sector, industry, marketCap, isEtf FROM symbol ORDER BY marketCap DESC LIMIT 500')
 rows = cursor.fetchall()

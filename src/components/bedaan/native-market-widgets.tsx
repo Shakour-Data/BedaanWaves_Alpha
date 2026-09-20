@@ -54,6 +54,7 @@ function priceFmt(v: number, unit = "") {
 }
 
 function mcapFmt(cap: number) {
+  if (cap <= 0) return "—"; // no real market cap data (anti-mock)
   if (cap >= 1e12) return `$${(cap / 1e12).toFixed(2)}T`;
   if (cap >= 1e9) return `$${(cap / 1e9).toFixed(2)}B`;
   if (cap >= 1e6) return `$${(cap / 1e6).toFixed(0)}M`;
@@ -153,14 +154,17 @@ export function NativeCandlestickChart({
 
 interface HeatmapRow {
   ticker: string;
-  name: string;
-  price: number;
+  overall: number;
+  grade: string;
   priceChange: number;
   marketCap: number;
-  grade: string;
-  overall: number;
   sector: string;
-  dimensionScores: Record<DimensionKey, number>;
+  dimFundamental: number;
+  dimTechnical: number;
+  dimSentiment: number;
+  dimRisk: number;
+  dimMacro: number;
+  dimAi: number;
 }
 
 type ColorMode =
@@ -264,9 +268,8 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
   }>({
     queryKey: ["heatmap-rankings"],
     queryFn: async () => {
-      const r = await fetch("/api/rankings?pageSize=100&page=1");
-      const j = await r.json();
-      return { rows: j.rows, total: j.total, latestAt: j.latestAt };
+      const r = await fetch("/api/heatmap");
+      return r.json();
     },
     staleTime: 5 * 60_000,
   });
@@ -280,6 +283,7 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
 
   const treeData = data.rows
     .slice()
+    .filter((r) => r.marketCap > 0) // anti-mock: exclude symbols with no real market cap
     .sort((a, b) => b.marketCap - a.marketCap)
     .map((r) => ({
       name: r.ticker,
@@ -287,13 +291,12 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
       priceChange: r.priceChange,
       overall: r.overall,
       grade: r.grade,
-      price: r.price,
-      dimFundamental: r.dimensionScores?.fundamental ?? 50,
-      dimTechnical: r.dimensionScores?.technical ?? 50,
-      dimSentiment: r.dimensionScores?.sentiment ?? 50,
-      dimRisk: r.dimensionScores?.risk ?? 50,
-      dimMacro: r.dimensionScores?.macro ?? 50,
-      dimAi: r.dimensionScores?.ai ?? 50,
+      dimFundamental: r.dimFundamental ?? 50,
+      dimTechnical: r.dimTechnical ?? 50,
+      dimSentiment: r.dimSentiment ?? 50,
+      dimRisk: r.dimRisk ?? 50,
+      dimMacro: r.dimMacro ?? 50,
+      dimAi: r.dimAi ?? 50,
     }));
 
   const modeLabel =
@@ -319,7 +322,7 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
       </ResponsiveContainer>
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 px-1 pt-1">
         <div className="flex items-center gap-2 text-xs">
-          <span>{data.total} real NASDAQ tickers · market-cap weighted</span>
+          <span>{data.rows.length} real NASDAQ tickers · market-cap weighted</span>
           <button
             className="flex items-center gap-0.5 rounded border border-border bg-background px-2 py-0.5 text-[10px] hover:bg-accent"
             onClick={() => {

@@ -212,10 +212,20 @@ export type Grade =
   | "STRONG_BULLISH"
   | "BULLISH"
   | "NEUTRAL"
+  | "NO_DATA"
   | "BEARISH"
   | "STRONG_BEARISH";
 
-export function gradeFor(score: number): Grade {
+const NO_DATA_COVERAGE_THRESHOLD = 0.1;
+
+export function gradeFor(score: number, coverage?: number): Grade {
+  if (
+    score === 50 &&
+    coverage !== undefined &&
+    coverage <= NO_DATA_COVERAGE_THRESHOLD
+  ) {
+    return "NO_DATA";
+  }
   if (score >= 85) return "STRONG_BULLISH";
   if (score >= 70) return "BULLISH";
   if (score >= 55) return "NEUTRAL";
@@ -231,6 +241,8 @@ export function gradeColor(grade: Grade): string {
       return "#22c55e";
     case "NEUTRAL":
       return "#a3a3a3";
+    case "NO_DATA":
+      return "#6b7280";
     case "BEARISH":
       return "#f87171";
     case "STRONG_BEARISH":

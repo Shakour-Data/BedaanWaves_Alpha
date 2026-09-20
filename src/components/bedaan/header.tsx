@@ -2,9 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Activity, TrendingUp } from "lucide-react";
+import { Search, Activity, TrendingUp, Layers } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 
 interface SymbolHit {
   ticker: string;
@@ -109,7 +110,7 @@ export function Header({ onSymbolSelect }: Props) {
                     )}
                     <span>{h.sector}</span>
                     <span className="font-mono">
-                      ${(h.marketCap / 1e9).toFixed(0)}B
+                      {h.marketCap > 0 ? `$${(h.marketCap / 1e9).toFixed(0)}B` : '—'}
                     </span>
                   </div>
                 </button>
@@ -126,6 +127,13 @@ export function Header({ onSymbolSelect }: Props) {
       >
         <TrendingUp className="h-3 w-3" /> Export
       </a>
+      <Link
+        href="/batches"
+        className="hidden items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/60 sm:flex"
+        title="Batch candlestick charts"
+      >
+        <Layers className="h-3 w-3" /> Batches
+      </Link>
     </header>
   );
 }

@@ -1,5 +1,4 @@
-// POST /api/refresh — trigger a full data refresh (fetch latest OHLCV + macro + news + re-score)
-// GET /api/refresh — get last-refresh status
+// POST /api/refresh — trigger a full data refresh (fetch latest OHLCV + macro + news + re-score + live prices)
 import { NextRequest, NextResponse } from "next/server";
 import { execSync } from "child_process";
 import { readFileSync, writeFileSync, existsSync } from "fs";
@@ -7,18 +6,21 @@ import { join } from "path";
 
 const REFRESH_FILE = "/tmp/bedaan-last-refresh.txt";
 const REFRESHING_FILE = "/tmp/bedaan-refreshing.lock";
+const PRICE_REFRESH_FILE = "/tmp/bedaan-prices-refreshing.lock";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   let lastRefresh: string | null = null;
   if (existsSync(REFRESH_FILE)) {
     lastRefresh = readFileSync(REFRESH_FILE, "utf-8").trim();
   }
   const isRefreshing = existsSync(REFRESHING_FILE);
+  const isPriceRefreshing = existsSync(PRICE_REFRESH_FILE);
 
   // Read data file timestamps for freshness info
   const dataFile = join(process.cwd(), "src/lib/scoring/seed/real-market-data.json");
   const macroFile = join(process.cwd(), "src/lib/scoring/seed/real-macro-data.json");
   const newsFile = join(process.cwd(), "src/lib/scoring/seed/real-news-data.json");
+  const liveFile = join(process.cwd(), "src/lib/scoring/seed/live-prices.json");
 
   const fetchData = (f: string) => {
     try {
@@ -32,14 +34,16 @@ export async function GET() {
   return NextResponse.json({
     lastRefresh,
     isRefreshing,
+    isPriceRefreshing,
     dataFreshness: {
       marketData: fetchData(dataFile),
       macroData: fetchData(macroFile),
       newsData: fetchData(newsFile),
+      livePrices: fetchData(liveFile),
     },
-    autoRefreshInterval: "2 hours",
+    autoRefreshInterval: "15 minutes",
     nextScheduledRefresh: lastRefresh
-      ? new Date(new Date(lastRefresh).getTime() + 2 * 60 * 60 * 1000).toISOString()
+      ? new Date(new Date(lastRefresh).getTime() + 15 * 60 * 1000).toISOString()
       : null,
   });
 }

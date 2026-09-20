@@ -1,6 +1,7 @@
 // GET /api/rankings — paginated, filtered, sorted NASDAQ rankings (latest day)
 import { NextRequest, NextResponse } from "next/server";
 import { fetchRankings, parseRankingColumnFilters } from "@/lib/scoring/queries";
+import { getLivePrices } from "@/lib/live-prices";
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -36,5 +37,21 @@ export async function GET(req: NextRequest) {
     generationId: sp.get("generationId") ?? undefined,
     processingStatus: sp.get("processingStatus") ?? undefined,
   });
-  return NextResponse.json(res);
+
+  // Enrich with live prices
+  const live = getLivePrices();
+  const rows = res.rows.map((row) => {
+    const lp = live?.tickers[row.ticker];
+    return {
+      ...row,
+      livePrice: lp?.price ?? null,
+      livePriceChange: lp?.change ?? null,
+      liveOpen: lp?.open ?? null,
+      liveHigh: lp?.high ?? null,
+      liveLow: lp?.low ?? null,
+      liveTimestamp: lp?.timestamp ?? null,
+    };
+  });
+
+  return NextResponse.json({ ...res, rows });
 }

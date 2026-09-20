@@ -385,7 +385,7 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
       sampleCount: learned.sampleCount,
       oosR2: learned.oosR2,
       oosIc: learned.oosIc,
-      driftPsi: learned.coldStart ? 0 : Math.random() * 0.3,
+      driftPsi: learned.coldStart ? 0 : (hashStr(ticker + "drift") >>> 0) / 0xFFFFFFFF * 0.3,
       regime: learned.regime,
       status: learned.coldStart ? "fallback_uniform" : "success",
       version: learned.version,

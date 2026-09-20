@@ -219,7 +219,7 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
     overall = clamp(overall, 0, 100);
 
     // Step 8 — grade & signals
-    const grade = gradeFor(overall);
+    const grade = gradeFor(overall, coverage);
     const signals = signalsFor(l1 as Record<string, number>, overall);
 
     // Step 9 — uncertainty & stability

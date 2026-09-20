@@ -72,6 +72,10 @@ interface SymbolDetail {
   dataQualitySnapshot: string;
   isProcessed: boolean;
   snapshotId: string;
+  livePrice?: number | null;
+  livePriceChange?: number | null;
+  liveTimestamp?: string | null;
+  marketStatus?: string;
   message?: string;
   failedReason?: string | null;
 }
@@ -206,14 +210,19 @@ const detail: SymbolDetail | undefined = q.data;
                 </div>
                 <div>
                   <span className="text-muted-foreground">Price:</span>{" "}
-                  <span className="font-mono">${detail.price.toFixed(2)}</span>{" "}
+                  <span className="font-mono">
+                    ${detail.livePrice != null ? detail.livePrice.toFixed(2) : detail.price.toFixed(2)}
+                  </span>{" "}
                   <span
                     className="font-mono"
-                    style={{ color: detail.priceChange >= 0 ? "#22c55e" : "#ef4444" }}
+                    style={{ color: (detail.livePriceChange ?? detail.priceChange) >= 0 ? "#22c55e" : "#ef4444" }}
                   >
-                    ({detail.priceChange >= 0 ? "+" : ""}
-                    {detail.priceChange.toFixed(2)}%)
+                    ({(detail.livePriceChange ?? detail.priceChange) >= 0 ? "+" : ""}
+                    {(detail.livePriceChange ?? detail.priceChange).toFixed(2)}%)
                   </span>
+                  {detail.livePrice != null && (
+                    <span className="ml-1 rounded px-1 py-0 text-[8px] bg-green-500/20 text-green-400 font-mono">LIVE</span>
+                  )}
                 </div>
               </div>
               {/* Dimension chips */}

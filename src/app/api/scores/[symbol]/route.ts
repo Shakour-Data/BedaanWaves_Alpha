@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchSymbolDetail } from "@/lib/scoring/queries";
 import { gradeFor } from "@/lib/scoring/transforms";
+import { getLivePrice } from "@/lib/live-prices";
 
 export async function GET(
   req: NextRequest,
@@ -55,6 +56,7 @@ export async function GET(
   }
   
   const overall = s.overall ?? 0;
+  const livePrice = getLivePrice(sym.ticker);
   return NextResponse.json({
     ticker: sym.ticker,
     name: sym.name ?? "",
@@ -68,7 +70,7 @@ export async function GET(
     dataQuality: sym.dataQuality,
     capturedAt: s.capturedAt?.toISOString() ?? "",
     overall,
-    grade: s.grade || gradeFor(overall),
+    grade: s.grade || gradeFor(overall, s.coverage ?? 0),
     signals: JSON.parse(s.signals || "[]"),
     dimensionScores: JSON.parse(s.dimensionScores || "{}"),
     subDimensionScores: JSON.parse(s.subDimensionScores || "{}"),
@@ -88,5 +90,9 @@ export async function GET(
     dataQualitySnapshot: s.dataQuality ?? "VALIDATED",
     isProcessed: s.isProcessed ?? false,
     snapshotId: s.id ?? "",
+    livePrice: livePrice?.price ?? null,
+    livePriceChange: livePrice?.change ?? null,
+    liveTimestamp: livePrice?.timestamp ?? null,
+    marketStatus: livePrice ? "OPEN" : "CLOSED",
   });
 }

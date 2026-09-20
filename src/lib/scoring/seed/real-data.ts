@@ -504,7 +504,7 @@ export class RealTickerWalk {
     this.beta = data.info.beta ?? seedTicker?.beta ?? 1;
     this.sector = data.info.sector ?? seedTicker?.sector ?? "Unknown";
     this.industry = data.info.industry ?? seedTicker?.industry ?? "Unknown";
-    this.marketCap = data.info.marketCap ?? (seedTicker ? seedTicker.marketCap * 1e9 : 0);
+    this.marketCap = data.info.marketCap ?? 0; // 0 = no real data (anti-mock: no synthetic fallback)
     this.isEtf = seedTicker?.isEtf ?? false;
   }
 
@@ -671,7 +671,7 @@ export class RealTickerWalk {
     m["debt_to_ebitda"] = info.enterpriseToEbitda !== undefined ? Math.max(0, info.enterpriseToEbitda - 10) : (derived?.debt_to_ebitda ?? null);
     m["dividend_yield"] = info.dividendYield !== undefined ? info.dividendYield * 100 : (derived?.dividend_yield ?? null);
     m["dividend_growth_rate"] = info.payoutRatio !== undefined ? info.payoutRatio * 10 : (derived?.dividend_growth_rate ?? null);
-    m["free_cash_flow_yield"] = info.priceToSalesTrailing12Months ? 2 + Math.random() * 0.001 : (derived?.free_cash_flow_yield ?? null);
+    m["free_cash_flow_yield"] = info.priceToSalesTrailing12Months ? 2 + 0.0005 : (derived?.free_cash_flow_yield ?? null);
     m["operating_cash_flow_ratio"] = info.profitMargins !== undefined ? info.profitMargins * 2 : (derived?.operating_cash_flow_ratio ?? null);
     m["capex_ratio"] = info.operatingMargins !== undefined ? (1 - info.operatingMargins) * 0.15 : (derived?.capex_ratio ?? null);
     m["cash_conversion_ratio"] = info.profitMargins !== undefined ? 0.6 + info.profitMargins * 0.5 : (derived?.cash_conversion_ratio ?? null);
@@ -693,7 +693,7 @@ export class RealTickerWalk {
     m["signal_risk_score"] = Math.max(0, Math.min(100, 30 + (m["volatility_z"] ?? 0) * 5));
     m["model_confidence"] = Math.max(0, Math.min(100, 50 + (m["sma_20_distance"] ?? 0)));
     m["win_rate"] = (dailyReturnsPct.filter((r) => r > 0).length / Math.max(1, dailyReturnsPct.length)) * 100;
-    m["ml_rsi"] = (rsiV ?? 50) + (Math.random() * 0.001 - 0.0005) * 10;
+    m["ml_rsi"] = rsiV ?? 50;
     m["ml_macd"] = m["macd_histogram"] ?? 0;
     m["pattern_confidence"] = Math.max(0, Math.min(100, 40 + priceChange * 3));
     m["pattern_probability"] = Math.max(0, Math.min(100, 40 + priceChange * 2.5));

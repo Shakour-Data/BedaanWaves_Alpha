@@ -1,22 +1,24 @@
 #!/bin/bash
 # BedaanWaves — Auto-Refresh Background Loop
-# Runs the full data refresh pipeline every 2 hours.
+# Runs live price refresh every 15 minutes.
+# Runs full data refresh every 2 hours.
 # Also keeps the dev server alive (watchdog).
 cd /home/z/my-project
 
-REFRESH_INTERVAL=7200  # 2 hours in seconds
+PRICE_REFRESH_INTERVAL=900  # 15 minutes in seconds
+FULL_REFRESH_INTERVAL=7200  # 2 hours in seconds
 DEV_CHECK_INTERVAL=10  # check dev server every 10s
 
 echo "[$(date)] === BedaanWaves auto-refresh + watchdog started ==="
-echo "[$(date)] Refresh interval: ${REFRESH_INTERVAL}s (2 hours)"
+echo "[$(date)] Price refresh interval: ${PRICE_REFRESH_INTERVAL}s (15 minutes)"
+echo "[$(date)] Full refresh interval: ${FULL_REFRESH_INTERVAL}s (2 hours)"
 echo "[$(date)] Dev server check interval: ${DEV_CHECK_INTERVAL}s"
 
-LAST_REFRESH=0
+LAST_PRICE_REFRESH=0
+LAST_FULL_REFRESH=0
 
 while true; do
   # 1. Watchdog: ensure dev server is alive
-  # Note: Next.js renames the process from "next dev" to "next-server" after boot,
-  # so we check for either name.
   if ! { pgrep -f "next-server" > /dev/null 2>&1 || pgrep -f "next dev" > /dev/null 2>&1; }; then
     echo "[$(date)] [watchdog] dev server not running, starting..."
     setsid bash -c 'exec bunx next dev -p 3000 -H 0.0.0.0' > /tmp/dev-start.log 2>&1 < /dev/null &
@@ -29,14 +31,22 @@ while true; do
     fi
   fi
 
-  # 2. Auto-refresh: run full data pipeline every 2 hours
   NOW=$(date +%s)
-  ELAPSED=$((NOW - LAST_REFRESH))
-  if [ $ELAPSED -ge $REFRESH_INTERVAL ]; then
-    echo "[$(date)] [refresh] starting auto-refresh (last was ${ELAPSED}s ago)..."
+
+  # 2. Live price refresh every 15 minutes
+  PRICE_ELAPSED=$((NOW - LAST_PRICE_REFRESH))
+  if [ $PRICE_ELAPSED -ge $PRICE_REFRESH_INTERVAL ]; then
+    echo "[$(date)] [price-refresh] starting live price refresh..."
+    bash /home/z/my-project/scripts/refresh-prices.sh >> /tmp/bedaan-price-refresh.log 2>&1
+    LAST_PRICE_REFRESH=$(date +%s)
+  fi
+
+  # 3. Full refresh every 2 hours
+  FULL_ELAPSED=$((NOW - LAST_FULL_REFRESH))
+  if [ $FULL_ELAPSED -ge $FULL_REFRESH_INTERVAL ]; then
+    echo "[$(date)] [full-refresh] starting full data refresh..."
     bash /home/z/my-project/scripts/auto-refresh.sh >> /tmp/bedaan-refresh.log 2>&1
-    LAST_REFRESH=$(date +%s)
-    echo "[$(date)] [refresh] complete. Next in ${REFRESH_INTERVAL}s."
+    LAST_FULL_REFRESH=$(date +%s)
   fi
 
   sleep $DEV_CHECK_INTERVAL

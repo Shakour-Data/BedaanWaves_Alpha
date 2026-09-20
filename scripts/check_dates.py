@@ -1,5 +1,5 @@
 import sqlite3
-conn = sqlite3.connect('C:/Users/Administrator/Documents/BedaanWaves_Alpha/prisma/db/custom.db')
+conn = sqlite3.connect('C:/Users/Administrator/Documents/BedaanWaves_Alpha/db/custom.db')
 cursor = conn.cursor()
 # Check all dates with snapshots
 cursor.execute("SELECT DISTINCT capturedAt, COUNT(*) FROM ScoreSnapshot GROUP BY capturedAt ORDER BY capturedAt DESC LIMIT 10")

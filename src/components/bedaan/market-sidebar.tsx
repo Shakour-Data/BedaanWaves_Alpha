@@ -33,9 +33,13 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
   const topSymbolsQ = useQuery({
     queryKey: ["top-symbols"],
     queryFn: async () => {
-      const r = await fetch("/api/symbols?limit=10");
+      const r = await fetch("/api/symbols?limit=50");
       const j = await r.json();
-      return j.symbols.sort((a: { marketCap: number }, b: { marketCap: number }) => b.marketCap - a.marketCap).slice(0, 10);
+      // Only rank symbols with REAL market cap data (anti-mock: never use a synthetic value).
+      return (j.symbols ?? [])
+        .filter((s: { marketCap: number }) => s.marketCap > 0)
+        .sort((a: { marketCap: number }, b: { marketCap: number }) => b.marketCap - a.marketCap)
+        .slice(0, 10);
     },
   });
 

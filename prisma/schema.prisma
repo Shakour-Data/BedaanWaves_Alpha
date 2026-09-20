@@ -36,8 +36,8 @@ model Symbol {
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 model BatchManifest {
-  id                  String   @id @default(cuid())
-  batchId             String   @unique
+  id                  String    @id @default(cuid())
+  batchId             String    @unique
   batchIndex          Int?
   batchSize           Int?
   sourceRevision      String?
@@ -45,13 +45,13 @@ model BatchManifest {
   selectedTickers     String?
   skippedTickers      String?
   failedTickers       String?
-  startedAt           DateTime @default(now())
+  startedAt           DateTime  @default(now())
   completedAt         DateTime?
-  status              String   @default("RUNNING")
-  rawRowsWritten      Int      @default(0)
-  snapshotsWritten    Int      @default(0)
-  coefficientsWritten Int      @default(0)
-  trainingRunsWritten Int      @default(0)
+  status              String    @default("RUNNING")
+  rawRowsWritten      Int       @default(0)
+  snapshotsWritten    Int       @default(0)
+  coefficientsWritten Int       @default(0)
+  trainingRunsWritten Int       @default(0)
   validationSummary   String?
   errorDetails        String?
   generationId        String?
@@ -68,7 +68,7 @@ model MarketBar {
   low         Float
   close       Float
   volume      Float
-  adjusted    Boolean   @default(true)
+  adjusted    Boolean  @default(true)
   source      String
   fetchedAt   DateTime
   batchId     String?
@@ -102,8 +102,8 @@ model ScoreSnapshot {
   dataQuality        String   @default("VALIDATED")
   coefficientVersion String
   rawDataHash        String
-  generationId       String?
   batchId            String?
+  generationId       String?
   symbol             Symbol   @relation(fields: [ticker], references: [ticker])
 
   @@unique([ticker, capturedAt])
@@ -112,6 +112,10 @@ model ScoreSnapshot {
   @@index([grade])
   @@index([batchId], map: "idx_snap_batchId")
   @@index([generationId], map: "idx_snap_generationId")
+  @@index([capturedAt, generationId, ticker], map: "idx_snap_capt_gen_ticker")
+  @@index([capturedAt, overall], map: "idx_snap_capt_overall")
+  @@index([capturedAt, grade], map: "idx_snap_capt_grade")
+  @@index([capturedAt, generationId, overall], map: "idx_snap_capt_gen_overall")
 }
 
 model Coefficient {
@@ -128,8 +132,8 @@ model Coefficient {
   oosIc        Float?
   shapTopKeys  String?
   meta         String?
-  generationId String?
   batchId      String?
+  generationId String?
   symbol       Symbol   @relation(fields: [ticker], references: [ticker])
 
   @@unique([ticker, level])

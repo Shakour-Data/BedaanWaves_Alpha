@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 
-db_path = "C:/Users/Administrator/Documents/BedaanWaves_Alpha/prisma/db/custom.db"
+db_path = "C:/Users/Administrator/Documents/BedaanWaves_Alpha/db/custom.db"
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 

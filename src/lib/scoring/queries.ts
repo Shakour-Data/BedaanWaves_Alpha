@@ -5,7 +5,6 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
 import { gradeFor } from "@/lib/scoring/transforms";
-import { getRealUniverse } from "@/lib/real-store";
 import type { DimensionKey } from "@/lib/scoring/metric-universe";
 
 export async function getLatestCapturedAt(generationId?: string): Promise<Date> {
@@ -30,8 +29,10 @@ export async function getLatestCapturedAtPerSymbol(ticker: string, generationId?
 }
 
 export async function getSuccessfulGenerations(): Promise<string[]> {
+  // Include PARTIAL batches — they contain successfully trained symbols
+  // (e.g. BATCH-1: 84 COEFFICIENTS_TRAINED, 12 delisted, 4 insufficient).
   const generations = await db.batchManifest.findMany({
-    where: { status: "COMPLETED" },
+    where: { status: { in: ["COMPLETED", "PARTIAL"] } },
     select: { generationId: true },
     distinct: ["generationId"],
     orderBy: { completedAt: "desc" },
@@ -90,6 +91,10 @@ export type RankingColumnKey =
   | "priceChange"
   | "marketCap"
   | "coverage"
+  | "processingStatus"
+  | "batchId"
+  | "generationId"
+  | "dataQuality"
   | `dimension.${DimensionKey}`;
 
 export type RankingFilterOperator =
@@ -122,6 +127,10 @@ const RANKING_COLUMN_KEYS = [
   "priceChange",
   "marketCap",
   "coverage",
+  "processingStatus",
+  "batchId",
+  "generationId",
+  "dataQuality",
   ...DIMENSION_KEYS.map((dimension) => `dimension.${dimension}`),
 ];
 
@@ -248,6 +257,10 @@ const RANKING_SORT_KEYS: RankingColumnKey[] = [
   "priceChange",
   "marketCap",
   "coverage",
+  "processingStatus",
+  "batchId",
+  "generationId",
+  "dataQuality",
   ...DIMENSION_KEYS.map(
     (dimension) => `dimension.${dimension}` as `dimension.${DimensionKey}`,
   ),
@@ -260,10 +273,6 @@ const GRADE_ORDER: Record<string, number> = {
   BEARISH: 3,
   STRONG_BEARISH: 4,
 };
-
-function isNumericColumn(key: RankingColumnKey): boolean {
-  return key !== "ticker" && key !== "grade";
-}
 
 function getRankingValue(
   record: RankingRecord,
@@ -348,8 +357,12 @@ function compareRankingRecords(
   sortField: RankingColumnKey,
   order: "asc" | "desc",
 ): number {
-  const av = getRankingValue(a, sortField);
-  const bv = getRankingValue(b, sortField);
+  if (sortField === "rank") {
+    return compareRankingRecords(a, b, "overall", order === "asc" ? "desc" : "asc");
+  }
+
+  const av = getSortValue(a, sortField);
+  const bv = getSortValue(b, sortField);
   if (av === null || av === undefined) return 1;
   if (bv === null || bv === undefined) return -1;
 
@@ -367,8 +380,10 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   const page = Math.max(1, q.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 25));
   
-  // Use latest successful generation if not specified
-  const generationId = q.generationId ?? (await getSuccessfulGenerations())[0];
+  // Use all generations if not specified, so symbols from every ingested
+  // batch (e.g. BATCH-1) appear in rankings, not just the latest one.
+  const generationId =
+    q.generationId && q.generationId !== "all" ? q.generationId : undefined;
   const latest = await getLatestCapturedAt(generationId);
 
   // Fetch latest + previous snapshot per ticker using select (not include)
@@ -489,11 +504,23 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     });
   }
 
-  // Filter out symbols with fewer than 50 candles
-  const universe = getRealUniverse();
+  // Include every symbol that has a score snapshot AND at least 360 candles.
+  // Candle data comes exclusively from the MarketBar table (ingested via
+  // ingest_nasdaq_batch.ts for Batch-1+ and future batches). real-market-data.json
+  // is only used for data freshness (live price overlays), NOT for the candle
+  // count filter. Symbols without MarketBar history are excluded so rankings
+  // only contain symbols with a full 360-candle history.
+  const candleCounts = await db.marketBar.groupBy({
+    by: ["ticker"],
+    where: { ticker: { in: records.map((r) => r.ticker) } },
+    _count: true,
+  });
+  const candleCountByTicker = new Map(
+    candleCounts.map((row) => [row.ticker, row._count]),
+  );
   let filtered = records.filter((record) => {
-    const walk = universe?.walks.get(record.ticker);
-    return walk && walk.ohlcv.length >= 50;
+    const barCount = candleCountByTicker.get(record.ticker) ?? 0;
+    return barCount >= 360;
   });
 
   const search = q.search?.trim().toLowerCase();
@@ -585,7 +612,7 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     page,
     pageSize,
     latestAt: latest.toISOString(),
-    generationId,
+    generationId: generationId ?? null,
   };
 }
 
@@ -847,11 +874,24 @@ export async function fetchPeers(ticker: string, compareTicker?: string, generat
       ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}),
     },
   });
-  // nearest 5 by market cap
-  const sorted = allInSector
-    .map((s) => ({ s, dist: Math.abs(Math.log(s.marketCap) - Math.log(sym.marketCap)) }))
-    .sort((a, b) => a.dist - b.dist)
-    .slice(0, 5);
+  // nearest 5 by market cap (log distance). Skip symbols with no real marketCap
+  // (marketCap <= 0 means no real data — anti-mock: never use a synthetic value).
+  const validPeers = allInSector.filter((s) => s.marketCap > 0);
+  let sorted: { s: (typeof allInSector)[number]; dist: number }[];
+  if (sym.marketCap > 0 && validPeers.length > 0) {
+    const logSym = Math.log(sym.marketCap);
+    sorted = validPeers
+      .map((s) => ({ s, dist: Math.abs(Math.log(s.marketCap) - logSym) }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 5);
+  } else {
+    // No real marketCap for the symbol: fall back to nearest by absolute marketCap
+    sorted = validPeers
+      .slice()
+      .sort((a, b) => b.marketCap - a.marketCap)
+      .slice(0, 5)
+      .map((s) => ({ s, dist: 0 }));
+  }
   const peerTickers = sorted.map((x) => x.s.ticker);
   
   // Include custom compare ticker if provided and not already in peer list

@@ -149,18 +149,56 @@ seed.out
 scripts/check_db.mts
 scripts/check_db.ts
 scripts/fetch_nasdaq_batch.py
+/check_backups.mjs
+/check_coverage.ts
+/check_db.cjs
+/check_db.mjs
+/check_db_256.py
+/check_db_deep.mjs
+/check_db_state.cjs
+/check_db_state.mjs
+/check_git.mjs
+/check_good_json.mjs
+/check_marketbar.mjs
+/check_mcap.ts
+/check_nosnap.mjs
+/check_prisma.cjs
+/check_prisma.mjs
+/check_remaining.mjs
+/check_sub.mjs
+/check_universe.mjs
+/check_universe.ts
+/create_neutral.mjs
+/create_neutral.ts
+/fetch_all_5years.py
+/find_issues.ts
+/fix_coverage.ts
+/fix_db.py
+/merge_db.py
+/score_all_symbols.js
+/score_all_symbols.ts
+/test_fetch.mjs
+/test_tsx.mjs
+/verify_all.ts
+/verify_complete.ts
+/verify_final.ts
+/verify_scored.mjs
 
 # Temp/backup files
 /Add100Symbol.txt
 /migrate.sql
 /package-lock.json
+/r.json
 src/lib/scoring/seed/nasdaq-batch-1.json.previous
 scripts/nasdaq-batch-1-manifest.json.previous
 scripts/__pycache__/
 
 # NASDAQ batch pipeline data (large, regenerable)
-src/lib/scoring/seed/nasdaq-batch-1.json
-scripts/nasdaq-batch-1-manifest.json
+src/lib/scoring/seed/nasdaq-batch-*.json
+src/lib/scoring/seed/nasdaq-batch-*.json.previous
+src/lib/scoring/seed/.nasdaq-batch-*.tmp-*
+scripts/nasdaq-batch-*-manifest.json
+scripts/nasdaq-batch-*-manifest.json.previous
 
 # NASDAQ batch pipeline tooling (one-off ingestion/dev scripts)
 /scripts/add_sources.cjs
@@ -178,9 +216,24 @@ scripts/nasdaq-batch-1-manifest.json
 /scripts/update_manifest.ts
 /scripts/verify_migration.mjs
 /scripts/verify_schema.mjs
+/scripts/fetch_live_prices.mjs
+/scripts/fill_missing_prices.mjs
+/scripts/fix_coefficient_version.ts
+/scripts/ingest_all_batches.ts
+/scripts/process-all-batches.ts
+/scripts/refresh-prices.sh
 
 # Prisma migration directory (generated; track only via git)
 prisma/migrations/
 
 # Generated symbol lists
 scripts/top_symbols.json
+
+# Runtime data files (regenerable, do not track)
+src/lib/scoring/seed/live-prices.json
+
+# Ad-hoc reports/debug
+REPORT-final.md
+/check_macro.mjs
+/scripts/fix-data-quality.ts
+/scripts/verify-all-fixes.ts
