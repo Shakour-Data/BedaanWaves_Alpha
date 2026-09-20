@@ -87,7 +87,7 @@ export async function GET(
     delta: prevOverall !== null && prevOverall !== undefined ? overall - prevOverall : null,
     coefficientVersion: s.coefficientVersion ?? "",
     rawDataHash: s.rawDataHash ?? "",
-    dataQualitySnapshot: s.dataQuality ?? "VALIDATED",
+    dataQualitySnapshot: s.dataQuality ?? "PROVISIONAL",
     isProcessed: s.isProcessed ?? false,
     snapshotId: s.id ?? "",
     livePrice: livePrice?.price ?? null,

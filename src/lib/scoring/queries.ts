@@ -62,6 +62,23 @@ export async function getPrevCapturedAtPerSymbol(ticker: string, latest: Date, g
   return row ? new Date(row.capturedAt) : null;
 }
 
+// ─── Data Quality Computation (based on real criteria) ────────────────────────
+export function computeDataQuality(
+  coverage: number,
+  coefficientVersion: string,
+): string {
+  if (coverage >= 0.8 && coefficientVersion !== "uniform-cold-start") {
+    return "VALIDATED";
+  }
+  if (coverage >= 0.5) {
+    return "PROVISIONAL";
+  }
+  if (coverage > 0) {
+    return "INSUFFICIENT";
+  }
+  return "REJECTED";
+}
+
 // ─── Rankings (latest day, paginated + filtered) ─────────────────────────────
 export interface RankingsQuery {
   page?: number;

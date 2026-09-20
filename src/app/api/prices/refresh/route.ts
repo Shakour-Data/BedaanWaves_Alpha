@@ -17,8 +17,15 @@ export async function POST(req: NextRequest) {
   writeFileSync(LOCK_FILE, new Date().toISOString());
 
   try {
+    const script = join(process.cwd(), "scripts/fetch_live_prices.mjs");
+    if (!existsSync(script)) {
+      return NextResponse.json(
+        { ok: false, error: "Price fetch script not found. Run setup first." },
+        { status: 503 }
+      );
+    }
     const result = execSync(
-      `node ${join(process.cwd(), "scripts/fetch_live_prices.mjs")} 2>&1`,
+      `node ${script} 2>&1`,
       {
         timeout: 600000,
         cwd: process.cwd(),

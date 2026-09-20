@@ -18,6 +18,7 @@ import {
 } from "./real-data";
 import { scoreMarket, type CoefficientLookup } from "../engine";
 import { learnCoefficients, type TrainingSample } from "../learner";
+import { computeDataQuality } from "../queries";
 
 const SCORING_DAYS = 60; // last 60 trading days (~3mo) for scoring + training
 // Need ≥55 samples (60 - 5 forward days) to exceed MIN_SAMPLES=50 and ensure
@@ -92,7 +93,7 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const fullUniverse = loadRealUniverse();
   if (!fullUniverse) {
     throw new Error(
-      "Real market data file not found. Run scripts/fetch_real_data.py and scripts/fetch_real_macro.py first."
+      "Real market data file not found. Run the data fetch pipeline to generate src/lib/scoring/seed/real-market-data.json and src/lib/scoring/seed/real-macro-data.json."
     );
   }
 
@@ -293,7 +294,7 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
         ciUpper: s.ciUpper,
         stabilityIndex: s.stabilityIndex,
         coverage: s.coverage,
-        dataQuality: "VALIDATED",
+        dataQuality: computeDataQuality(s.coverage, s.coefficientVersion),
         coefficientVersion: s.coefficientVersion,
         rawDataHash: hashStr(
           s.ticker + capturedAt + Math.round(s.overall * 1e6).toString(36)

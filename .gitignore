@@ -237,3 +237,4 @@ REPORT-final.md
 /check_macro.mjs
 /scripts/fix-data-quality.ts
 /scripts/verify-all-fixes.ts
+/scripts/backfill-data-quality.ts

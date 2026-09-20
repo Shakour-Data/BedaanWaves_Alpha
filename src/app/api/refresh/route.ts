@@ -65,10 +65,17 @@ export async function POST(req: NextRequest) {
   try {
     // Run the auto-refresh script in the background (non-blocking)
     // The script will: fetch OHLCV + macro + news, then re-score
+    const refreshScript = join(process.cwd(), "scripts/auto-refresh.sh");
+    if (!existsSync(refreshScript)) {
+      return NextResponse.json(
+        { ok: false, error: "Refresh script not found. Run setup first." },
+        { status: 503 }
+      );
+    }
     const result = execSync(
-      `bash ${join(process.cwd(), "scripts/auto-refresh.sh")} 2>&1`,
+      `bash ${refreshScript} 2>&1`,
       {
-        timeout: 600000, // 10 min max
+        timeout: 600000,
         cwd: process.cwd(),
         encoding: "utf-8",
       }

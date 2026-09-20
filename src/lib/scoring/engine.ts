@@ -25,6 +25,7 @@ import {
   isValidCoefficients,
 } from "./transforms";
 import type { CoefficientBundle, HierarchicalScore } from "./types";
+import { computeDataQuality } from "./queries";
 
 // Asset metrics: ticker → dbField → value|null
 export type AssetMetrics = Record<string, Record<string, number | null>>;
@@ -250,7 +251,7 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
       aspectScores: l3,
       subAspectScores: l4,
       coefficientVersion: coeffs?.version ?? "uniform-cold-start",
-      dataQuality: "VALIDATED",
+      dataQuality: computeDataQuality(s.coverage, coeffs?.version ?? "uniform-cold-start"),
     });
   }
 
