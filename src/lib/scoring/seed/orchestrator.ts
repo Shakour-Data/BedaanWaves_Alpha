@@ -345,7 +345,9 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const trainingRuns: TrainingRunRow[] = [];
   for (const ticker of universe.tickers) {
     const samples = trainingSamplesByTicker[ticker] ?? [];
+    const trainStart = Date.now();
     const learned = learnCoefficients(ticker, samples);
+    const trainDurationMs = Date.now() - trainStart;
     const ts = new Date().toISOString();
     const levels: Array<"dimensions" | "sub_dimensions" | "aspects" | "sub_aspects"> = [
       "dimensions", "sub_dimensions", "aspects", "sub_aspects",
@@ -382,11 +384,11 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
       ticker,
       level: "ALL",
       startedAt: ts,
-      durationMs: 100 + Math.floor(Math.random() * 400),
+      durationMs: trainDurationMs,
       sampleCount: learned.sampleCount,
       oosR2: learned.oosR2,
       oosIc: learned.oosIc,
-      driftPsi: learned.coldStart ? 0 : (hashStr(ticker + "drift") >>> 0) / 0xFFFFFFFF * 0.3,
+      driftPsi: learned.driftPsi,
       regime: learned.regime,
       status: learned.coldStart ? "fallback_uniform" : "success",
       version: learned.version,

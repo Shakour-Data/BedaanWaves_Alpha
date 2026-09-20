@@ -377,107 +377,6 @@ function beta(stockReturns: number[], marketReturns: number[]): number {
   return cov / varM;
 }
 
-// ─── Derive fundamental proxies from REAL OHLCV when yfinance info is unavailable ──
-// These are real market-implied fundamentals computed from real price action,
-// volume, market cap, and beta — NOT synthetic/mock data.
-function deriveFundamentalsFromOHLCV(
-  bars: RealBar[],
-  closes: number[],
-  cur: RealBar,
-  priceChange: number,
-  marketCap: number,
-  beta: number,
-  dailyReturnsPct: number[]
-): Record<string, number | null> {
-  const n = closes.length;
-  const last = cur.close;
-  // Volatility from real returns
-  const meanRet = dailyReturnsPct.reduce((a, b) => a + b, 0) / Math.max(1, dailyReturnsPct.length);
-  const stdRet = Math.sqrt(
-    dailyReturnsPct.reduce((a, b) => a + (b - meanRet) ** 2, 0) / Math.max(1, dailyReturnsPct.length)
-  );
-  // Recent momentum (12-day) from real closes
-  const mom12 = n >= 13 ? ((last - closes[n - 13]) / closes[n - 13]) * 100 : 0;
-  // Volume ratio (recent vs prior 10-day average)
-  const volRecent = bars.slice(-10).reduce((a, b) => a + b.volume, 0) / Math.max(1, Math.min(10, bars.length));
-  const volPrior = bars.slice(-20, -10).reduce((a, b) => a + b.volume, 0) / Math.max(1, Math.min(10, Math.max(0, bars.length - 10)));
-  const volRatio = volRecent / Math.max(volPrior, 0.001);
-  // Valuation multiples are market-implied: derive from real price, volume, and volatility.
-  // Higher liquidity (price × volume) and lower volatility → richer valuation multiples.
-  const avgVol20 = bars.slice(-20).reduce((a, b) => a + b.volume, 0) / Math.max(1, Math.min(20, bars.length));
-  const liquidityScore = (last * avgVol20) / 1e9; // real price × real volume (billions)
-  const volPenalty = 1 + stdRet * 50;
-  const liqFactor = 0.3 + Math.log10(Math.max(1, liquidityScore)) * 0.5;
-  const pe_ratio = Math.max(3, Math.min(200, 20 * liqFactor / volPenalty));
-  const pb_ratio = Math.max(0.3, Math.min(40, 3.5 * liqFactor / volPenalty));
-  const priceToSales = Math.max(0.2, Math.min(25, 2.0 * liqFactor / volPenalty));
-  const ev_ebitda = Math.max(3, Math.min(80, priceToSales / 0.3 * (1 + (1 - stdRet * 10) * 0.5)));
-  // PEG: PE adjusted by real momentum (growth expectation)
-  const peg_ratio = pe_ratio && pe_ratio > 0 ? pe_ratio / Math.max(0.5, 1 + mom12 * 0.1) : null;
-  // Price-to-cash-flow: PE scaled by real liquidity
-  const price_to_cash_flow = pe_ratio * 0.6 * liqFactor;
-  // Profitability proxies from real momentum, volatility, and volume dynamics
-  const profit_margin = Math.max(0, Math.min(100, 5 + mom12 * 0.5 + (1 - stdRet * 10) * 2 + (volRatio - 1) * 3));
-  const gross_margin = Math.max(5, Math.min(120, profit_margin + 10 + (1 - stdRet * 10) * 5));
-  const operating_margin = Math.max(3, Math.min(100, profit_margin * 0.8 + (1 - stdRet * 10) * 3));
-  const net_margin = Math.max(2, Math.min(90, profit_margin * 0.6 + (1 - stdRet * 10) * 2));
-  const ebitda_margin = Math.max(5, Math.min(110, operating_margin + 8));
-  const roe = Math.max(0, Math.min(150, profit_margin * 2 + beta * 5 + (1 - stdRet * 10) * 3));
-  const roa = roe * 0.6;
-  const roic = roe * 0.8;
-  // Growth proxies from momentum and volume
-  const revenue_growth = Math.max(-50, Math.min(200, mom12 * 2 + (volRatio - 1) * 30));
-  const eps_growth = revenue_growth * 0.9;
-  const earnings_growth = eps_growth;
-  const free_cash_flow_growth = revenue_growth * 0.8;
-  // Liquidity proxies from volume dynamics
-  const current_ratio = Math.max(0.5, Math.min(5, 1.5 + volRatio * 0.3));
-  const quick_ratio = current_ratio * 0.8;
-  const cash_ratio = quick_ratio * 0.5;
-  const asset_turnover = Math.max(0.1, Math.min(3, 0.5 + volRatio * 0.1));
-  const inventory_turnover = asset_turnover * 1.2;
-  const receivables_turnover = asset_turnover * 1.5;
-  // Solvency proxies from beta and volatility
-  const debt_to_equity = Math.max(0, Math.min(200, (1 - beta) * 50 + stdRet * 1000));
-  const debt_to_assets = debt_to_equity / (debt_to_equity + 100);
-  const interest_coverage = Math.max(1, Math.min(50, 5 + profit_margin * 0.5));
-  const debt_to_ebitda = Math.max(0, Math.min(20, 8 - profit_margin * 0.1));
-  // Dividend proxies from stability
-  const dividend_yield = Math.max(0, Math.min(10, 2 + (1 - stdRet * 10) * 0.5));
-  const dividend_growth_rate = Math.max(0, Math.min(20, dividend_yield * 2));
-  const free_cash_flow_yield = Math.max(0, Math.min(15, 3 + profit_margin * 0.1));
-  const operating_cash_flow_ratio = profit_margin * 0.5;
-  const capex_ratio = Math.max(0, Math.min(1, 0.1 + (1 - profit_margin / 100) * 0.1));
-  const cash_conversion_ratio = Math.max(0, Math.min(1, 0.5 + profit_margin / 100));
-  const roe_stability = Math.max(0, Math.min(100, 60 - stdRet * 500 + beta * 10));
-  const earnings_quality = Math.max(0, Math.min(100, 40 + profit_margin * 0.8));
-
-  // Risk metrics derived from real OHLCV
-  // default_prob: higher for high debt, high volatility, low profitability
-  const default_prob = Math.max(0, Math.min(100, 5 + debt_to_equity * 0.1 + stdRet * 200 - profit_margin * 0.2));
-  // credit_spread: basis points, higher for riskier companies
-  const credit_spread = Math.max(50, Math.min(2000, 100 + default_prob * 10));
-  // bid_ask_spread: inverse of liquidity
-  const bid_ask_spread = Math.max(0.01, Math.min(5, 0.5 / Math.max(0.001, volRatio) + stdRet * 10));
-  // volume_ratio: already computed as volRatio
-
-  return {
-    pe_ratio, pb_ratio, ev_ebitda, peg_ratio, price_to_sales: priceToSales,
-    price_to_cash_flow,
-    payout_ratio: Math.max(0, Math.min(100, 40 + dividend_yield * 5)),
-    roe, roa, roic, profit_margin, gross_margin, operating_margin, net_margin,
-    ebitda_margin, operating_leverage: operating_margin * 2,
-    revenue_growth, eps_growth, earnings_growth, free_cash_flow_growth,
-    current_ratio, quick_ratio, cash_ratio, asset_turnover, inventory_turnover,
-    receivables_turnover, debt_to_equity, debt_to_assets, interest_coverage,
-    debt_to_ebitda, dividend_yield, dividend_growth_rate, free_cash_flow_yield,
-    operating_cash_flow_ratio, capex_ratio, cash_conversion_ratio,
-    roe_stability, earnings_quality,
-    // Risk metrics
-    default_prob, credit_spread, bid_ask_spread, volume_ratio: volRatio,
-  };
-}
-
 // ─── Per-day metric builder (real indicators from real candles) ────────────
 export interface DayMetrics {
   date: string;
@@ -509,7 +408,7 @@ export class RealTickerWalk {
   }
 
   // Compute all metrics for day `idx` using real candle history [0..idx]
-  metricsForDay(idx: number, marketReturns: number[]): Record<string, number | null> {
+  metricsForDay(idx: number, marketReturns: number[], riskFreeRate: number | null = null): Record<string, number | null> {
     const bars = this.ohlcv.slice(0, idx + 1);
     if (bars.length === 0) return {};
     const closes = bars.map((b) => b.close);
@@ -546,7 +445,22 @@ export class RealTickerWalk {
 
     const sk = stochK(bars, 14);
     m["stoch_k"] = sk !== null ? sk : 50;
-    m["kdj_j"] = (rsiV ?? 50 - 50) * 2.5;
+    // KDJ J-line = 3*K - 2*D, where D = 3-period SMA of K. Computed from real candles.
+    if (sk !== null && bars.length >= 16) {
+      const kValues: number[] = [];
+      for (let j = 0; j < 3; j++) {
+        const k = stochK(bars.slice(0, bars.length - j), 14);
+        if (k !== null) kValues.push(k);
+      }
+      if (kValues.length === 3) {
+        const d = kValues.reduce((a, b) => a + b, 0) / 3;
+        m["kdj_j"] = Math.max(-50, Math.min(150, 3 * sk - 2 * d));
+      } else {
+        m["kdj_j"] = null;
+      }
+    } else {
+      m["kdj_j"] = null;
+    }
     const cciV = cci(bars, 20);
     m["cci_20"] = cciV !== null ? cciV : 0;
     const wrV = williamsR(bars, 14);
@@ -616,93 +530,63 @@ export class RealTickerWalk {
     m["var_95"] = Math.abs(meanRet - 1.645 * stdRet) * 100;
     m["var_99"] = Math.abs(meanRet - 2.326 * stdRet) * 100;
     m["cvar_95"] = Math.abs(meanRet - 2.5 * stdRet) * 100;
-    const rf = 3.63; // current fed funds rate
-    m["sharpe_ratio"] = sharpe(dailyReturnsPct, rf);
-    m["sortino_ratio"] = sortino(dailyReturnsPct, rf);
+    m["sharpe_ratio"] = sharpe(dailyReturnsPct, riskFreeRate ?? 0);
+    m["sortino_ratio"] = sortino(dailyReturnsPct, riskFreeRate ?? 0);
     m["beta"] = beta(dailyReturnsPct, marketReturns.slice(-Math.min(dailyReturnsPct.length, marketReturns.length))) ?? this.beta;
 
-    // ── Fundamental indicators (real, from yfinance info; fallback to derived from real OHLCV) ──
+    // ── Fundamental indicators (real, from yfinance info only) ──
+    // Per spec §1.2: NO synthetic/fabricated fundamentals. If yfinance info
+    // is unavailable, all fundamental metrics remain null (→ 50.0 neutral at L4).
     const info = this.info;
-    const hasInfo = info && Object.keys(info).length > 0;
-
-    // When yfinance info is unavailable (as is the case for bulk fetches), derive
-    // fundamental proxies from REAL OHLCV price action, volume, market cap, and beta.
-    // These are real market-implied fundamentals — not synthetic/mock data.
-    const derived = hasInfo ? null : deriveFundamentalsFromOHLCV(bars, closes, cur, priceChange, this.marketCap, this.beta, dailyReturnsPct);
-
-    const pick = <T>(infoVal: T | undefined | null, derivedVal: T | null): T | null =>
-      infoVal !== undefined && infoVal !== null ? infoVal : derivedVal;
-
-    m["default_prob"] = pick(info?.debtToEquity, derived?.default_prob ?? null);
-    m["credit_spread"] = pick(info?.debtToEquity, derived?.credit_spread ?? null);
-    m["bid_ask_spread"] = pick(info?.averageDailyVolume10Day, derived?.bid_ask_spread ?? null);
-    m["volume_ratio"] = pick(info?.averageVolume, derived?.volume_ratio ?? null);
     m["risk_score"] = (Math.abs(m["volatility_z"] ?? 0) + (m["max_drawdown"] ?? 0)) / 2;
 
-    m["pe_ratio"] = pick(info.trailingPE, derived?.pe_ratio ?? null);
-    m["pb_ratio"] = pick(info.priceToBook, derived?.pb_ratio ?? null);
-    m["ev_ebitda"] = pick(info.enterpriseToEbitda, derived?.ev_ebitda ?? null);
-    m["peg_ratio"] = pick(info.pegRatio, derived?.peg_ratio ?? null);
-    m["price_to_sales"] = pick(info.priceToSalesTrailing12Months, derived?.price_to_sales ?? null);
-    m["price_to_cash_flow"] = pick(info.trailingPE ? info.trailingPE * 0.6 : null, derived?.price_to_cash_flow ?? null);
-    m["payout_ratio"] = info.payoutRatio !== undefined ? info.payoutRatio * 100 : (derived?.payout_ratio ?? null);
-    m["roe"] = info.returnOnEquity !== undefined ? info.returnOnEquity * 100 : (derived?.roe ?? null);
-    m["roa"] = info.returnOnAssets !== undefined ? info.returnOnAssets * 100 : (derived?.roa ?? null);
-    m["roic"] = info.returnOnInvestedCapital !== undefined ? info.returnOnInvestedCapital * 100 : (derived?.roic ?? null);
-    m["profit_margin"] = info.profitMargins !== undefined ? info.profitMargins * 100 : (derived?.profit_margin ?? null);
-    m["gross_margin"] = info.grossMargins !== undefined ? info.grossMargins * 100 : (derived?.gross_margin ?? null);
-    m["operating_margin"] = info.operatingMargins !== undefined ? info.operatingMargins * 100 : (derived?.operating_margin ?? null);
-    m["net_margin"] = info.profitMargins !== undefined ? info.profitMargins * 100 : (derived?.net_margin ?? null);
-    m["ebitda_margin"] = info.operatingMargins !== undefined ? info.operatingMargins * 100 + 8 : (derived?.ebitda_margin ?? null);
-    m["operating_leverage"] = info.operatingMargins !== undefined ? info.operatingMargins * 2 : (derived?.operating_leverage ?? null);
-    m["revenue_growth"] = info.revenueGrowth !== undefined ? info.revenueGrowth * 100 : (derived?.revenue_growth ?? null);
-    m["eps_growth"] = info.earningsGrowth !== undefined ? info.earningsGrowth * 100 : (derived?.eps_growth ?? null);
-    m["earnings_growth"] = info.earningsGrowth !== undefined ? info.earningsGrowth * 100 : (derived?.earnings_growth ?? null);
-    m["free_cash_flow_growth"] = info.revenueGrowth !== undefined ? info.revenueGrowth * 80 : (derived?.free_cash_flow_growth ?? null);
-    m["current_ratio"] = pick(info.currentRatio, derived?.current_ratio ?? null);
-    m["quick_ratio"] = pick(info.quickRatio, derived?.quick_ratio ?? null);
-    m["cash_ratio"] = info.quickRatio !== undefined ? info.quickRatio * 0.5 : (derived?.cash_ratio ?? null);
-    m["asset_turnover"] = info.priceToSalesTrailing12Months ? 1 / info.priceToSalesTrailing12Months : (derived?.asset_turnover ?? null);
-    m["inventory_turnover"] = derived?.inventory_turnover ?? null; // requires balance sheet detail
-    m["receivables_turnover"] = derived?.receivables_turnover ?? null;
-    m["debt_to_equity"] = info.debtToEquity !== undefined ? info.debtToEquity : (derived?.debt_to_equity ?? null);
-    m["debt_to_assets"] = info.debtToEquity !== undefined ? info.debtToEquity / (info.debtToEquity + 100) : (derived?.debt_to_assets ?? null);
-    m["interest_coverage"] = info.operatingMargins !== undefined ? info.operatingMargins * 30 + 5 : (derived?.interest_coverage ?? null);
-    m["debt_to_ebitda"] = info.enterpriseToEbitda !== undefined ? Math.max(0, info.enterpriseToEbitda - 10) : (derived?.debt_to_ebitda ?? null);
-    m["dividend_yield"] = info.dividendYield !== undefined ? info.dividendYield * 100 : (derived?.dividend_yield ?? null);
-    m["dividend_growth_rate"] = info.payoutRatio !== undefined ? info.payoutRatio * 10 : (derived?.dividend_growth_rate ?? null);
-    m["free_cash_flow_yield"] = info.priceToSalesTrailing12Months ? 2 + 0.0005 : (derived?.free_cash_flow_yield ?? null);
-    m["operating_cash_flow_ratio"] = info.profitMargins !== undefined ? info.profitMargins * 2 : (derived?.operating_cash_flow_ratio ?? null);
-    m["capex_ratio"] = info.operatingMargins !== undefined ? (1 - info.operatingMargins) * 0.15 : (derived?.capex_ratio ?? null);
-    m["cash_conversion_ratio"] = info.profitMargins !== undefined ? 0.6 + info.profitMargins * 0.5 : (derived?.cash_conversion_ratio ?? null);
-    m["roe_stability"] = info.returnOnEquity !== undefined ? 60 + info.returnOnEquity * 20 : (derived?.roe_stability ?? null);
-    m["earnings_quality"] = info.profitMargins !== undefined ? 40 + info.profitMargins * 50 : (derived?.earnings_quality ?? null);
+    m["pe_ratio"] = info?.trailingPE ?? null;
+    m["pb_ratio"] = info?.priceToBook ?? null;
+    m["ev_ebitda"] = info?.enterpriseToEbitda ?? null;
+    m["peg_ratio"] = info?.pegRatio ?? null;
+    m["price_to_sales"] = info?.priceToSalesTrailing12Months ?? null;
+    m["price_to_cash_flow"] = null;
+    m["payout_ratio"] = info?.payoutRatio !== undefined ? info.payoutRatio * 100 : null;
+    m["roe"] = info?.returnOnEquity !== undefined ? info.returnOnEquity * 100 : null;
+    m["roa"] = info?.returnOnAssets !== undefined ? info.returnOnAssets * 100 : null;
+    m["roic"] = info?.returnOnInvestedCapital !== undefined ? info.returnOnInvestedCapital * 100 : null;
+    m["profit_margin"] = info?.profitMargins !== undefined ? info.profitMargins * 100 : null;
+    m["gross_margin"] = info?.grossMargins !== undefined ? info.grossMargins * 100 : null;
+    m["operating_margin"] = info?.operatingMargins !== undefined ? info.operatingMargins * 100 : null;
+    m["net_margin"] = info?.profitMargins !== undefined ? info.profitMargins * 100 : null;
+    m["ebitda_margin"] = null;
+    m["operating_leverage"] = null;
+    m["revenue_growth"] = info?.revenueGrowth !== undefined ? info.revenueGrowth * 100 : null;
+    m["eps_growth"] = info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null;
+    m["earnings_growth"] = info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null;
+    m["free_cash_flow_growth"] = null;
+    m["current_ratio"] = info?.currentRatio ?? null;
+    m["quick_ratio"] = info?.quickRatio ?? null;
+    m["cash_ratio"] = null;
+    m["asset_turnover"] = null;
+    m["inventory_turnover"] = null;
+    m["receivables_turnover"] = null;
+    m["debt_to_equity"] = info?.debtToEquity !== undefined ? info.debtToEquity : null;
+    m["debt_to_assets"] = null;
+    m["interest_coverage"] = null;
+    m["debt_to_ebitda"] = null;
+    m["dividend_yield"] = info?.dividendYield !== undefined ? info.dividendYield * 100 : null;
+    m["dividend_growth_rate"] = null;
+    m["free_cash_flow_yield"] = null;
+    m["operating_cash_flow_ratio"] = null;
+    m["capex_ratio"] = null;
+    m["cash_conversion_ratio"] = null;
+    m["roe_stability"] = null;
+    m["earnings_quality"] = null;
 
-    // ── Sentiment (derived from real price action + volume) ──
-    m["news_sentiment_avg"] = Math.max(0, Math.min(100, 50 + priceChange * 3));
-    m["news_volume"] = cur.volume / 1e6;
-    m["social_sentiment"] = Math.max(0, Math.min(100, 50 + priceChange * 4));
-    m["social_volume"] = cur.volume / 1e5;
-    m["analyst_rating"] = Math.max(0, Math.min(100, 50 + (m["sma_20_distance"] ?? 0) * 2));
-    m["target_price_change"] = priceChange * 1.5;
+    // default_prob / credit_spread: only from real yfinance debtToEquity
+    m["default_prob"] = info?.debtToEquity ?? null;
+    m["credit_spread"] = info?.debtToEquity ?? null;
+    m["bid_ask_spread"] = info?.averageDailyVolume10Day ?? null;
+    m["volume_ratio"] = info?.averageVolume ?? null;
 
-    // AI dimension — derived from real technical + fundamental signals
-    m["expected_return"] = priceChange * 1.2 + (m["sma_20_distance"] ?? 0) * 0.5;
-    m["confidence"] = Math.max(0, Math.min(100, 50 + Math.abs(priceChange) * 5));
-    m["expected_volatility"] = stdRet * 100;
-    m["signal_risk_score"] = Math.max(0, Math.min(100, 30 + (m["volatility_z"] ?? 0) * 5));
-    m["model_confidence"] = Math.max(0, Math.min(100, 50 + (m["sma_20_distance"] ?? 0)));
-    m["win_rate"] = (dailyReturnsPct.filter((r) => r > 0).length / Math.max(1, dailyReturnsPct.length)) * 100;
-    m["ml_rsi"] = rsiV ?? 50;
-    m["ml_macd"] = m["macd_histogram"] ?? 0;
-    m["pattern_confidence"] = Math.max(0, Math.min(100, 40 + priceChange * 3));
-    m["pattern_probability"] = Math.max(0, Math.min(100, 40 + priceChange * 2.5));
-    m["pattern_reliability"] = Math.max(0, Math.min(100, 50 + (adxV ?? 20)));
-    m["pattern_type"] = priceChange > 1 ? 70 : priceChange < -1 ? 30 : 50;
-    m["pattern_horizon"] = 3 + (adxV ?? 20) / 4;
-    m["anomaly_z_score"] = Math.abs(priceChange) + (stdRet * 100);
-    m["anomaly_persistence"] = stdRet > 0.02 ? 0.8 : 0.3;
-    m["anomaly_confidence"] = Math.max(0, Math.min(100, 40 + Math.abs(priceChange) * 5));
+    // Sentiment & AI metrics are overridden in generateRealDay using REAL news
+    // data. If no real data is available, they remain null (→ 50.0 neutral at L4).
 
     return m;
   }
@@ -729,31 +613,45 @@ export function macroForDay(
 }
 
 // ─── Map FRED macro fields to METRIC_UNIVERSE subAspect names ────────────────
-// Computes derived macro fields from available FRED data
+// All fields are real FRED series loaded from the macro data file.
+// No synthetic/derived values — only direct real-data mappings.
 function mapMacroToSubAspects(
-  macro: Record<string, number>,
-  macroHistory: Record<string, number[]>
+  macro: Record<string, number>
 ): Record<string, number> {
   const out: Record<string, number> = {};
 
-  // Direct mappings (FRED key -> subAspect)
+  // Direct mappings (real FRED key -> METRIC_UNIVERSE subAspect)
   const directMap: Record<string, string> = {
     real_gdp: "real_gdp",
     industrial_production: "industrial_production",
+    capacity_utilization: "capacity_utilization",
     housing_permits: "housing_permits",
     consumer_sentiment: "consumer_sentiment",
     cpi_index: "cpi_index",
     core_cpi_index: "core_cpi_index",
+    gdp_qoq: "gdp_qoq",
+    gdp_growth_yoy: "gdp_growth_yoy",
+    gdp_deflator_inflation: "gdp_deflator_inflation",
+    inflation_yoy: "inflation_yoy",
+    cpi_inflation_yoy: "cpi_inflation_yoy",
+    core_inflation_yoy: "core_inflation_yoy",
+    gdp_per_capita: "gdp_per_capita",
+    exports_growth: "exports_growth",
+    imports_growth: "imports_growth",
     fed_funds_rate: "fed_funds_rate",
     treasury_yield_2y: "treasury_yield_2y",
+    treasury_yield_5y: "treasury_yield_5y",
     treasury_yield_10y: "treasury_yield_10y",
+    treasury_yield_13w: "treasury_yield_13w",
     treasury_yield_30y: "treasury_yield_30y",
     yield_curve_spread: "yield_curve_spread",
     dollar_index: "dollar_index",
-    us_eur: "usd_eur",
+    usd_eur: "usd_eur",
     usd_gbp: "usd_gbp",
     usd_jpy: "usd_jpy",
     oil_price: "oil_price",
+    gold_price: "gold_price",
+    vix: "vix",
     nonfarm_payrolls: "nonfarm_payrolls",
     unemployment_rate: "unemployment_rate",
   };
@@ -764,99 +662,7 @@ function mapMacroToSubAspects(
     }
   }
 
-  // Derived fields from available data
-  // gdp_qoq: quarter-over-quarter GDP growth (approximate from real_gdp history)
-  if (macroHistory.real_gdp && macroHistory.real_gdp.length >= 2) {
-    const hist = macroHistory.real_gdp;
-    const last = hist[hist.length - 1];
-    const prev = hist[hist.length - 2];
-    out.gdp_qoq = ((last - prev) / prev) * 100;
-  } else if (macro.real_gdp !== undefined) {
-    out.gdp_qoq = 0; // placeholder
-  }
-
-  // gdp_growth_yoy: year-over-year GDP growth
-  if (macroHistory.real_gdp && macroHistory.real_gdp.length >= 5) {
-    const hist = macroHistory.real_gdp;
-    const last = hist[hist.length - 1];
-    const yearAgo = hist[Math.max(0, hist.length - 5)];
-    out.gdp_growth_yoy = ((last - yearAgo) / yearAgo) * 100;
-  } else {
-    out.gdp_growth_yoy = 2.5; // reasonable default
-  }
-
-  // capacity_utilization: estimate from industrial_production
-  if (macro.industrial_production !== undefined) {
-    out.capacity_utilization = macro.industrial_production;
-  }
-
-  // exports_growth, imports_growth: estimate from GDP growth and trade balance
-  const gdpGrowth = out.gdp_growth_yoy ?? 2.5;
-  // Add variation based on dollar index (stronger dollar -> lower exports)
-  const dollarEffect = macro.dollar_index !== undefined ? (macro.dollar_index - 110) * 0.1 : 0;
-  out.exports_growth = gdpGrowth + dollarEffect;
-  out.imports_growth = gdpGrowth - dollarEffect;
-
-  // gdp_deflator_inflation: approximate from cpi
-  if (macro.cpi_index !== undefined && macroHistory.cpi_index && macroHistory.cpi_index.length >= 2) {
-    const hist = macroHistory.cpi_index;
-    const last = hist[hist.length - 1];
-    const prev = hist[hist.length - 2];
-    out.gdp_deflator_inflation = ((last - prev) / prev) * 100;
-  } else {
-    out.gdp_deflator_inflation = 2.0;
-  }
-
-  // gdp_per_capita: rough estimate
-  out.gdp_per_capita = (macro.real_gdp ?? 25000) / 330; // per million people
-
-  // gov_spending_gdp: estimate from GDP components (typically ~20% but varies)
-  // Use unemployment as proxy (higher unemployment -> more gov spending)
-  if (macro.unemployment_rate !== undefined) {
-    out.gov_spending_gdp = Math.max(15, Math.min(30, 20 + (macro.unemployment_rate - 4) * 2));
-  } else {
-    out.gov_spending_gdp = 20.0;
-  }
-
-  // Inflation YoY fields
-  if (macroHistory.cpi_index && macroHistory.cpi_index.length >= 13) {
-    const hist = macroHistory.cpi_index;
-    const last = hist[hist.length - 1];
-    const yearAgo = hist[Math.max(0, hist.length - 13)];
-    const inflationYoy = ((last - yearAgo) / yearAgo) * 100;
-    out.inflation_yoy = inflationYoy;
-    out.cpi_inflation_yoy = inflationYoy;
-    out.core_inflation_yoy = inflationYoy * 0.8; // core typically lower
-  } else {
-    out.inflation_yoy = 3.0;
-    out.cpi_inflation_yoy = 3.0;
-    out.core_inflation_yoy = 2.5;
-  }
-
-  // treasury_yield_5y: interpolate between 2y and 10y
-  if (macro.treasury_yield_2y !== undefined && macro.treasury_yield_10y !== undefined) {
-    out.treasury_yield_5y = (macro.treasury_yield_2y + macro.treasury_yield_10y) / 2;
-  }
-
-  // treasury_yield_13w: approximate from fed_funds_rate
-  if (macro.fed_funds_rate !== undefined) {
-    out.treasury_yield_13w = macro.fed_funds_rate * 0.9;
-  }
-
-  // vix: estimate from yield curve spread and dollar index
-  if (macro.yield_curve_spread !== undefined && macro.dollar_index !== undefined) {
-    out.vix = Math.max(10, Math.min(50, 15 + macro.yield_curve_spread * 20 + (macro.dollar_index - 100) * 0.2));
-  } else {
-    out.vix = 20;
-  }
-
-  // gold_price: estimate from inflation, real rates, and dollar index
-  // Gold tends to rise with inflation, fall with real rates and strong dollar
-  const inflation = out.inflation_yoy ?? 3.0;
-  const realRate = (macro.fed_funds_rate ?? 3.5) - inflation;
-  const dollarIdx = macro.dollar_index ?? 100;
-  // Base ~1800, adjusted for inflation (positive), real rates (negative), dollar (negative)
-  out.gold_price = Math.max(1000, Math.min(3000, 1800 + inflation * 100 - realRate * 50 - (dollarIdx - 100) * 5));
+  // gov_spending_gdp is not available as a real FRED series — omitted (null at L4).
 
   return out;
 }
@@ -929,50 +735,6 @@ export function computeMarketReturns(universe: LoadedUniverse): number[] {
   return returns;
 }
 
-// ─── Build historical values for derived macro fields ────────────────────────
-// Computes derived macro fields for each date in the macro data up to maxDate
-function buildDerivedMacroHistory(
-  macro: Record<string, RealMacroPoint[]>,
-  maxDate: string
-): Record<string, number[]> {
-  const out: Record<string, number[]> = {};
-  
-  // Get all unique dates from macro data up to maxDate
-  const allDates = new Set<string>();
-  for (const points of Object.values(macro)) {
-    if (Array.isArray(points)) {
-      for (const p of points) {
-        if (p.date <= maxDate) allDates.add(p.date);
-      }
-    }
-  }
-  const sortedDates = Array.from(allDates).sort();
-  
-  if (sortedDates.length === 0) return out;
-  
-  // For each date, compute the macro snapshot and then derived fields
-  for (const dateStr of sortedDates) {
-    const dayMacro = macroForDay(macro, dateStr);
-    const dayMacroHistory: Record<string, number[]> = {};
-    // Build history up to this date for derived field computation
-    for (const [key, points] of Object.entries(macro)) {
-      if (!Array.isArray(points) || points.length === 0) continue;
-      const hist: number[] = [];
-      for (const p of points) {
-        if (p.date <= dateStr) hist.push(p.value);
-      }
-      if (hist.length > 0) dayMacroHistory[key] = hist;
-    }
-    const derived = mapMacroToSubAspects(dayMacro, dayMacroHistory);
-    for (const [key, value] of Object.entries(derived)) {
-      if (!out[key]) out[key] = [];
-      out[key].push(value);
-    }
-  }
-  
-  return out;
-}
-
 // ─── Generate a single day's metrics from real data ────────────────────────
 export function generateRealDay(
   universe: LoadedUniverse,
@@ -985,6 +747,7 @@ export function generateRealDay(
   // Build macro history: for each indicator, collect all historical values
   // up to and including the current day. Used for time-series scoring
   // (market-wide indicators need historical context, not cross-sectional ranking).
+  // All fields here are real FRED series — no synthetic derivations.
   const macroHistory: Record<string, number[]> = {};
   for (const [key, points] of Object.entries(universe.macro)) {
     if (!Array.isArray(points) || points.length === 0) continue;
@@ -992,13 +755,6 @@ export function generateRealDay(
     for (const p of points) {
       if (p.date <= dateStr) hist.push(p.value);
     }
-    if (hist.length > 0) macroHistory[key] = hist;
-  }
-
-  // Build history for derived macro fields (needed for time-series scoring)
-  // Compute derived values for each historical date up to current day
-  const derivedMacroHistory = buildDerivedMacroHistory(universe.macro, dateStr);
-  for (const [key, hist] of Object.entries(derivedMacroHistory)) {
     if (hist.length > 0) macroHistory[key] = hist;
   }
 
@@ -1022,14 +778,16 @@ export function generateRealDay(
       priceChange,
       volume: bar.volume,
     };
-    // Compute metrics using real candle history up to this date
+    // Compute metrics using real candle history up to this date.
+    // Risk-free rate from real macro data (fed_funds_rate) for Sharpe/Sortino.
+    const realRf = macro.fed_funds_rate !== undefined ? macro.fed_funds_rate : null;
     const slicedWalk = new RealTickerWalk(ticker, {
       ohlcv: walk.ohlcv.slice(0, barIdx + 1),
       info: walk.info,
     }, undefined);
-    const m = slicedWalk.metricsForDay(barIdx, marketReturns);
+    const m = slicedWalk.metricsForDay(barIdx, marketReturns, realRf);
     // Add macro metrics mapped to METRIC_UNIVERSE subAspect names
-    const macroMapped = mapMacroToSubAspects(macro, macroHistory);
+    const macroMapped = mapMacroToSubAspects(macro);
     for (const [k, v] of Object.entries(macroMapped)) {
       m[k] = v;
     }

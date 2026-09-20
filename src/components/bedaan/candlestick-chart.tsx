@@ -14,6 +14,13 @@ import {
 } from "@/lib/technical-indicators";
 import type { Bar } from "@/lib/technical-indicators";
 
+// Deterministic counter for drawing IDs — no Math.random() per spec §1.2.
+let drawIdCounter = 0;
+function nextDrawId(): string {
+  drawIdCounter = (drawIdCounter + 1) & 0x7fffffff;
+  return `${Date.now().toString(36)}-${drawIdCounter.toString(36)}`;
+}
+
 // ── Types ──────────────────────────────────────────────────────
 interface CandlestickChartProps {
   bars: Bar[];
@@ -211,7 +218,7 @@ export function CandlestickChart({
       const rng = b - a;
       EXT_LEVELS.forEach((l) => { const v = parseFloat(l); levels.push({ price: c + rng * (v / 100), pct: l }); });
     }
-    const d: Drawing = { id: Math.random().toString(36).slice(2, 9), type: tool, points: pts.map((p) => ({ x: p.x - M.left, y: p.y - M.top })), color: colors[tool] ?? "#fff", levels };
+    const d: Drawing = { id: nextDrawId(), type: tool, points: pts.map((p) => ({ x: p.x - M.left, y: p.y - M.top })), color: colors[tool] ?? "#fff", levels };
     setDrawings((p) => [...p, d]);
     setDraftPts([]);
     setActiveTool("cursor");
