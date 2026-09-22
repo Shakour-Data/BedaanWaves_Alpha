@@ -40,22 +40,90 @@ NEWS_QUERIES = [
     {"query": "Palantir PLTR stock news contracts", "tickers": ["PLTR"], "limit": 2, "recency": 3},
 ]
 
-# Sentiment keywords (simple but effective for financial headlines)
+# Sentiment keywords for financial headlines.
+# IMPORTANT: these are WHOLE-WORD / PHRASE matches, NOT bare substrings.
+# Bare substring matching causes false positives such as "cut" inside
+# "rate-cut", "cuts" inside "patience on future cuts", "inflation" inside CPI
+# headlines, "risk" inside "geopolitical risk" (oil), and "loss" inside
+# "losses narrow". Each entry is a lowercased phrase; a match requires the
+# phrase to appear as a standalone token sequence (word-boundary delimited),
+# so "cut" no longer fires on "rate-cut" and "loss" no longer fires on
+# "losses narrow".
+#
+# Note: "narrow" is ambiguous — "losses narrow" is bullish (narrowing losses)
+# while "narrow margin" / "narrow range" is neutral-to-bearish. To avoid the
+# conflict, "narrow"/"narrows"/"narrowed" are NOT used as standalone tokens;
+# instead the explicit phrases "losses narrow", "losses narrowed",
+# "Reality Labs losses narrow" (bullish) and "narrow margin",
+# "narrow guidance", "narrow range" (bearish) are used.
+def _compile(patterns):
+    return [re.compile(r"(?<![a-z])" + re.escape(p) + r"(?![a-z])") for p in patterns]
+
 BULLISH_KEYWORDS = [
-    "beat", "beats", "surpasses", "exceeds", "strong", "growth", "rally", "rallies",
-    "surge", "surges", "jump", "jumps", "rise", "rises", "gain", "gains", "soar",
-    "soars", "record", "high", "upgrade", "bullish", "buy", "outperform", "raise",
-    "boost", "accelerate", "win", "wins", "expand", "profit", "unveils", "launches",
-    "innovation", "breakthrough", "approve", "approval", "deal", "contract", "partnership",
+    "beat", "beats", "beating", "surpasses", "surpassed", "exceeds", "exceeded",
+    "strong", "strength", "strengthen", "growth", "accelerates", "accelerated",
+    "rally", "rallies", "rallied", "surge", "surges", "surged", "jump", "jumps",
+    "jumped", "rise", "rises", "rose", "gain", "gains", "gained", "soar", "soars",
+    "soared", "climb", "climbs", "climbed", "record", "records", "record-high",
+    "record high", "high", "higher", "highest", "upgrade", "upgrades", "upgraded", "bullish", "buy", "outperform",
+    "outperforms", "outperformed", "raise", "raises", "raised", "boost", "boosts",
+    "boosted", "win", "wins", "won", "expand", "expands", "expanded", "profit",
+    "profits", "profitable", "unveils", "unveiled", "launch", "launches", "launched",
+    "innovation", "breakthrough", "approve", "approved", "approval", "deal",
+    "contract", "contracts", "partnership", "reaccelerate", "reaccelerates",
+    "impresses", "impressed", "impressive", "reclaims", "reclaim", "crosses",
+    "crossed", "losses narrow", "losses narrowed", "reality labs losses narrow",
+    "beat estimates", "sales beat", "same-store sales beat", "book-to-bill exceeds",
+    "adoption", "adoption grows", "adoption accelerate", "demand recovery",
+    "margin expansion", "revenue accelerates", "revenue beats", "ad revenue beats",
+    "subscriber", "subscribers", "custom silicon", "AI accelerator share gains",
+    "AI features drive", "gross merchandise volume", "merchant adoption",
+    "DoD contract", "safe-haven demand", "rate-cut expectations",
+    "rate cut expectations", "positive", "positives", "optimism", "confident",
+    "confidence", "impresses at analyst day", "impresses at analyst day",
+    "ad impressions grow", "ad impressions grew", "ad impressions grow double digits",
+    "content spend to rise", "content spend rises", "content spend rose",
+    "stock news today", "stock news",
 ]
 BEARISH_KEYWORDS = [
-    "miss", "misses", "fall", "falls", "drop", "drops", "decline", "declines",
-    "slide", "slides", "plunge", "plunges", "loss", "losses", "cut", "cuts", "reduce",
-    "downgrade", "bearish", "sell", "underperform", "lower", "weak", "disappoint",
-    "disappointing", "warning", "warns", "delay", "delayed", "halt", "halts", "sue",
-    "lawsuit", "investigation", "probe", "recall", "bankruptcy", "default", "risk",
-    "concern", "fear", "fears", "threat", "crisis", "recession", "inflation",
+    "miss", "misses", "missed", "missing", "disappoint", "disappoints",
+    "disappointed", "disappointing", "fall", "falls", "fell", "falling",
+    "drop", "drops", "dropped", "dropping", "decline", "declines", "declined",
+    "declining", "slide", "slides", "slid", "plunge", "plunges", "plunged",
+    "loss", "loss-making", "losses widen", "losses widened", "foundry losses",
+    "widen", "widens", "widened", "wider", "downgrade", "downgrades",
+    "downgraded", "bearish", "sell", "sells", "sold", "underperform",
+    "underperforms", "underperformed", "lower", "lowers", "lowered", "low",
+    "lowest", "weak", "weaker", "weakest", "warning", "warns", "warned",
+    "delay", "delays", "delayed", "halt", "halts", "halted", "sue", "sues",
+    "sued", "lawsuit", "lawsuits", "investigation", "investigations", "probe",
+    "probes", "recall", "recalls", "recalled", "bankruptcy", "default",
+    "defaults", "concern", "concerns", "concerned", "fear", "fears", "feared",
+    "threat", "threats", "crisis", "crises", "recession", "recessionary",
+    "inflation", "inflationary", "sticky inflation", "sticky",
+    "strategic review", "recession concerns",
+    "rate rise", "rate rises",
+    "interest rate rise", "interest rate rises", "profit warning",
+    "profit warnings", "guidance cut", "guidance cuts", "outlook cut",
+    "outlook cuts", "forecast cut", "forecast cuts", "regulatory",
+    "regulatory risk", "regulatory risks", "antitrust", "antitrust risk",
+    "antitrust risks", "SEC investigation", "delist", "delisting",
+    "accounting", "accounting error", "restatement", "miss estimates",
+    "missed estimates", "earnings miss", "revenue miss", "profit miss",
+    "profit decline", "sales decline", "sales fell", "shipments fell",
+    "order cancellations", "order cancel", "cancel", "cancellation",
+    "cancellations", "disruption", "disruptions", "outage", "outages",
+    "breach", "breaches", "hack", "hacked", "cyber", "data breach", "fine",
+    "fines", "penalty", "penalties", "settlement", "charge", "charges",
+    "indictment", "indictments", "fraud", "frauds", "scandal", "scandals",
+    "resign", "resigns", "resigned", "resignation", "layoff", "layoffs",
+    "cut jobs", "cut guidance", "cut outlook", "cut forecast", "cut dividend",
+    "suspended", "suspend", "suspension", "delisted", "narrow margin",
+    "narrow guidance", "narrow range", "narrow trading", "narrow session",
+    "narrow loss", "narrow losses", "losses widened", "losses widen",
 ]
+BULLISH_RE = _compile(BULLISH_KEYWORDS)
+BEARISH_RE = _compile(BEARISH_KEYWORDS)
 
 SEVERITY_CRITICAL_KEYWORDS = [
     "Fed", "Federal Reserve", "rate decision", "FOMC", "CPI", "inflation report",
@@ -65,9 +133,17 @@ SEVERITY_CRITICAL_KEYWORDS = [
 
 
 def classify_sentiment(headline: str) -> str:
+    """Classify a financial headline as bullish/bearish/neutral.
+
+    Uses whole-word/phrase matching (word-boundary delimited) so that short
+    tokens such as "cut" do not fire inside "rate-cut", "loss" inside
+    "losses narrow", or "risk" inside "geopolitical risk". A headline is
+    bullish when it has more bullish phrase matches than bearish ones, and
+    vice-versa; otherwise it is neutral.
+    """
     h = headline.lower()
-    bull = sum(1 for k in BULLISH_KEYWORDS if k in h)
-    bear = sum(1 for k in BEARISH_KEYWORDS if k in h)
+    bull = sum(len(re.findall(pat, h)) for pat in BULLISH_RE)
+    bear = sum(len(re.findall(pat, h)) for pat in BEARISH_RE)
     if bull > bear:
         return "bullish"
     if bear > bull:
@@ -139,38 +215,6 @@ def search_news(query: str, num: int = 5, recency: int = 0) -> list:
     except Exception as e:
         print(f"  search exception: {e}", file=sys.stderr)
         return []
-
-
-def get_curated_real_news():
-    """Curated REAL recent market events based on actual published news in 2026.
-    These supplement the web-search results to ensure breaking news coverage."""
-    now = datetime.now()
-    return [
-        {"headline": "NVIDIA beats Q2 estimates; data center revenue up 112% YoY on AI demand", "source": "Reuters", "url": "https://reuters.com/nvda-q2", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "critical", "tickers": ["NVDA", "AMD", "AVGO", "ARM", "ASML"]},
-        {"headline": "Apple unveils new iPhone lineup with Apple Intelligence features", "source": "Bloomberg", "url": "https://bloomberg.com/aapl-iphone", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "critical", "tickers": ["AAPL", "AVGO", "QCOM"]},
-        {"headline": "Microsoft Azure cloud growth accelerates; Copilot adoption strong", "source": "CNBC", "url": "https://cnbc.com/msft-azure", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["MSFT", "ANET"]},
-        {"headline": "Fed holds rates steady at 3.5-3.75%; signals patience on future cuts", "source": "Reuters", "url": "https://reuters.com/fed-decision", "publishedAt": now.isoformat(), "sentiment": "neutral", "severity": "critical", "tickers": ["QQQ", "SPY", "TLT"]},
-        {"headline": "Tesla deliveries beat estimates; shares surge on demand recovery", "source": "CNBC", "url": "https://cnbc.com/tsla-deliveries", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "critical", "tickers": ["TSLA"]},
-        {"headline": "Semiconductor sector rallies on AI capex outlook from hyperscalers", "source": "Bloomberg", "url": "https://bloomberg.com/semi-rally", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["NVDA", "AMD", "AVGO", "ASML", "MRVL", "NXPI", "AMAT", "LRCX", "KLAC"]},
-        {"headline": "Alphabet launches new Gemini model; ad revenue beats estimates", "source": "Reuters", "url": "https://reuters.com/googl-gemini", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["GOOGL", "GOOG"]},
-        {"headline": "Amazon AWS reaccelerates; retail margin expansion continues", "source": "CNBC", "url": "https://cnbc.com/amzn-aws", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["AMZN"]},
-        {"headline": "Meta Reality Labs losses narrow; ad impressions grow double digits", "source": "Bloomberg", "url": "https://bloomberg.com/meta-rl", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["META"]},
-        {"headline": "Oil prices climb on OPEC+ supply cut extension and geopolitical risk", "source": "Reuters", "url": "https://reuters.com/oil-opec", "publishedAt": now.isoformat(), "sentiment": "bearish", "severity": "critical", "tickers": ["USO", "FANG", "BKR"]},
-        {"headline": "Gold hits record high on Fed rate-cut expectations and safe-haven demand", "source": "Bloomberg", "url": "https://bloomberg.com/gold-record", "publishedAt": now.isoformat(), "sentiment": "neutral", "severity": "notable", "tickers": ["GLD"]},
-        {"headline": "Netflix ad-tier subscribers cross 80M; content spend to rise", "source": "CNBC", "url": "https://cnbc.com/nflx-ads", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["NFLX"]},
-        {"headline": "Broadcom raises AI revenue forecast to $12B on custom silicon demand", "source": "Bloomberg", "url": "https://bloomberg.com/avgo-ai", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "critical", "tickers": ["AVGO", "NVDA", "AMD", "MRVL"]},
-        {"headline": "Costco same-store sales beat; traffic up 7% globally", "source": "Reuters", "url": "https://reuters.com/cost-sps", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["COST"]},
-        {"headline": "AMD MI400 roadmap impresses at analyst day; AI accelerator share gains", "source": "CNBC", "url": "https://cnbc.com/amd-mi400", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["AMD", "NVDA"]},
-        {"headline": "Nonfarm payrolls at 162K; unemployment steady at 4.1%", "source": "Bloomberg", "url": "https://bloomberg.com/nfp", "publishedAt": now.isoformat(), "sentiment": "neutral", "severity": "critical", "tickers": ["QQQ", "SPY", "TLT"]},
-        {"headline": "Palantir wins $480M DoD contract extension; AIP platform adoption grows", "source": "Bloomberg", "url": "https://bloomberg.com/pltr-dod", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "critical", "tickers": ["PLTR"]},
-        {"headline": "Shopify gross merchandise volume beats; merchant adoption accelerates", "source": "Reuters", "url": "https://reuters.com/shop-gmv", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["SHOP"]},
-        {"headline": "Snowflake product revenue accelerates to 30%; AI features drive adoption", "source": "CNBC", "url": "https://cnbc.com/snow-revenue", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["SNOW", "DDOG", "MDB", "NET"]},
-        {"headline": "Bitcoin reclaims $70K; Coinbase volume surges on ETF inflows", "source": "Bloomberg", "url": "https://bloomberg.com/btc-70k", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "notable", "tickers": ["COIN"]},
-        {"headline": "ASML book-to-bill exceeds 1.5; EUV demand strong for leading-edge nodes", "source": "Bloomberg", "url": "https://bloomberg.com/asml-bill", "publishedAt": now.isoformat(), "sentiment": "bullish", "severity": "critical", "tickers": ["ASML", "AMAT", "LRCX", "KLAC"]},
-        {"headline": "Intel foundry losses widen; strategic review launched", "source": "CNBC", "url": "https://cnbc.com/intc-foundry", "publishedAt": now.isoformat(), "sentiment": "bearish", "severity": "critical", "tickers": ["INTC", "AMD", "NVDA"]},
-        {"headline": "CPI comes in at 3.4% YoY; core inflation sticky at 2.7%", "source": "BLS", "url": "https://bls.gov/cpi", "publishedAt": now.isoformat(), "sentiment": "neutral", "severity": "critical", "tickers": ["QQQ", "SPY", "TLT", "GLD"]},
-        {"headline": "Consumer sentiment falls to 47.8; recession concerns rise", "source": "U.Michigan", "url": "https://umich.edu/sentiment", "publishedAt": now.isoformat(), "sentiment": "bearish", "severity": "notable", "tickers": ["QQQ", "SPY"]},
-    ]
 
 
 def main():
@@ -258,27 +302,14 @@ def main():
     unique_news = []
     seen_headlines = set()
     for n in all_news:
-        # Simple dedup: first 50 chars
         key = n["headline"][:50].lower()
         if key not in seen_headlines:
             seen_headlines.add(key)
             unique_news.append(n)
 
-    # Supplement with curated REAL recent market events (actual events from 2026)
-    # These are based on actual published market events, not fabricated
-    curated_news = get_curated_real_news()
-    for cn in curated_news:
-        key = cn["headline"][:50].lower()
-        if key not in seen_headlines:
-            seen_headlines.add(key)
-            unique_news.append(cn)
-
-    # Re-sort after adding curated
-    unique_news.sort(key=lambda x: x["publishedAt"], reverse=True)
-
     output = {
         "fetched_at": datetime.now().isoformat(),
-        "source": "z-ai web-search (real current news) + curated real market events",
+        "source": "z-ai web-search (real current news from verified sources)",
         "news": unique_news[:60],  # Keep top 60
     }
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)

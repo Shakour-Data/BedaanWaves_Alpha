@@ -12,11 +12,11 @@ export const db =
 
 // Apply SQLite pragmas for performance
 if (process.env.NODE_ENV === 'production') {
-  db.$executeRaw`PRAGMA journal_mode = WAL;`
-  db.$executeRaw`PRAGMA synchronous = NORMAL;`
-  db.$executeRaw`PRAGMA cache_size = -32768;`
-  db.$executeRaw`PRAGMA temp_store = MEMORY;`
-  db.$executeRaw`PRAGMA mmap_size = 268435456;`
+  void db.$executeRaw`PRAGMA journal_mode = WAL;`;
+  void db.$executeRaw`PRAGMA synchronous = NORMAL;`;
+  void db.$executeRaw`PRAGMA cache_size = -32768;`;
+  void db.$executeRaw`PRAGMA temp_store = MEMORY;`;
+  void db.$executeRaw`PRAGMA mmap_size = 268435456;`;
 }
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db

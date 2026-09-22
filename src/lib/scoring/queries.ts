@@ -521,12 +521,12 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     });
   }
 
-  // Include every symbol that has a score snapshot AND at least 360 candles.
+  // Include every symbol that has a score snapshot AND at least 50 candles.
   // Candle data comes exclusively from the MarketBar table (ingested via
   // ingest_nasdaq_batch.ts for Batch-1+ and future batches). real-market-data.json
   // is only used for data freshness (live price overlays), NOT for the candle
   // count filter. Symbols without MarketBar history are excluded so rankings
-  // only contain symbols with a full 360-candle history.
+  // only contain symbols with a minimum 50-candle history.
   const candleCounts = await db.marketBar.groupBy({
     by: ["ticker"],
     where: { ticker: { in: records.map((r) => r.ticker) } },
@@ -536,8 +536,8 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     candleCounts.map((row) => [row.ticker, row._count]),
   );
   let filtered = records.filter((record) => {
-    const barCount = candleCountByTicker.get(record.ticker) ?? 0;
-    return barCount >= 360;
+    const barCount = (candleCountByTicker.get(record.ticker) ?? 0) as number;
+    return barCount >= 50;
   });
 
   const search = q.search?.trim().toLowerCase();

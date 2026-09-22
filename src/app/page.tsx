@@ -25,9 +25,17 @@ export default function Home() {
   // Toggle between real candlestick chart (default when symbol selected) and heatmap
   const [bottomView, setBottomView] = useState<"chart" | "heatmap">("chart");
 
-  // Auto-seed on first load if DB is empty (the /api/seed endpoint is idempotent).
+  // Expose generation/coverage state instead of triggering full seed from browser.
+  const [seedStatus, setSeedStatus] = useState<{symbols: number; snapshots: number; status: string} | null>(null);
   useEffect(() => {
-    fetch("/api/seed").catch(() => null);
+    fetch("/api/seed")
+      .then((r) => r.json())
+      .then((data) => setSeedStatus({
+        symbols: data.symbols ?? 0,
+        snapshots: data.snapshots ?? 0,
+        status: data.ok ? "ready" : "pending",
+      }))
+      .catch(() => null);
   }, []);
 
   // When a symbol is selected, auto-switch to chart view (deferred to avoid set-state-in-effect)

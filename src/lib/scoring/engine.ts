@@ -17,6 +17,7 @@ import {
   coverageWeightedMean,
   crossSectionalScore,
   gradeFor,
+  normalizeIndicatorScore,
   signalsFor,
   stabilityIndex,
   subAspectScore,
@@ -70,13 +71,21 @@ export function getDynamicWeights(
 
   // Support both CoefficientBundle (.weights nested) and flat weights records
   // (weights spread directly on the object with a `level` key, as passed from scoreMarket).
-  const weights = (bundle as any)?.weights ?? (bundle as any);
+  // Strip non-numeric metadata keys (e.g. `level`) before validation —
+  // isValidCoefficients rejects any entry whose value is not a finite number.
+  const raw = (bundle as any)?.weights ?? (bundle as any);
+  const weights: Record<string, number> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === "number" && isFinite(v)) weights[k] = v;
+    }
+  }
 
   if (
     bundle &&
     !bundle.coldStart &&
     bundle.level === level &&
-    weights &&
+    Object.keys(weights).length > 0 &&
     isValidCoefficients(weights, keysForLevel)
   ) {
     return { weights, coldStart: false };
@@ -112,26 +121,30 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
         // Time-series scoring: score the current macro value relative to its
         // historical distribution. All tickers share the same base score.
         const hist = input.macroHistory?.[spec.dbField] ?? [];
-        let baseScore = 50.0;
+        const val = assetMetrics[tickers[0]]?.[spec.dbField] ?? null;
+        const baseScore = timeSeriesScore(val, hist, spec.lowerIsBetter);
+        // Modulate by per-ticker sensitivity: positive beta amplifies the
+        // deviation from 50 in the favorable direction; negative beta reverses it.
         for (let i = 0; i < n; i++) {
-          const val = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
-          baseScore = timeSeriesScore(val, hist, spec.lowerIsBetter);
-          // Modulate by per-ticker sensitivity: positive beta amplifies the
-          // deviation from 50 in the favorable direction; negative beta reverses it.
           const beta = clamp(input.macroSensitivities?.[tickers[i]]?.[spec.dbField] ?? 0, -1, 1);
           const adjusted = 50 + (baseScore - 50) * (1 + beta * 0.6);
           subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(adjusted, 0, 100);
         }
       } else {
-       // Cross-sectional scoring for per-ticker metrics (fundamental, technical, etc.)
-       const col: (number | null)[] = tickers.map(
-         (t) => assetMetrics[t]?.[spec.dbField] ?? null
-       );
-       const scores = crossSectionalScore(col, spec.lowerIsBetter);
-       for (let i = 0; i < n; i++) {
-         subAspectScoreMap[tickers[i]][spec.subAspect] = scores[i];
-       }
-     }
+        // Cross-sectional scoring for per-ticker metrics (fundamental, technical, etc.)
+        // Per spec §6.1: normalize raw indicator values before scoring.
+        const col: (number | null)[] = tickers.map(
+          (t) => {
+            const raw = assetMetrics[t]?.[spec.dbField] ?? null;
+            if (raw === null) return null;
+            return normalizeIndicatorScore(spec.dbField, raw);
+          }
+        );
+        const scores = crossSectionalScore(col, spec.lowerIsBetter);
+        for (let i = 0; i < n; i++) {
+          subAspectScoreMap[tickers[i]][spec.subAspect] = scores[i];
+        }
+      }
    }
 
   const out: HierarchicalScore[] = [];
@@ -251,7 +264,7 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
       aspectScores: l3,
       subAspectScores: l4,
       coefficientVersion: coeffs?.version ?? "uniform-cold-start",
-      dataQuality: computeDataQuality(s.coverage, coeffs?.version ?? "uniform-cold-start"),
+      dataQuality: computeDataQuality(coverage, coeffs?.version ?? "uniform-cold-start"),
     });
   }
 

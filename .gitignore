@@ -235,6 +235,25 @@ src/lib/scoring/seed/live-prices.json
 # Ad-hoc reports/debug
 REPORT-final.md
 /check_macro.mjs
+/check-progress.ts
 /scripts/fix-data-quality.ts
 /scripts/verify-all-fixes.ts
 /scripts/backfill-data-quality.ts
+
+# Kilo tooling
+.kilo/
+
+# ML model artifacts (trained binaries, do not track)
+artifacts/
+
+# Generated data manifests
+src/lib/scoring/seed/universe-manifest.json
+
+# Python ML training pipeline (one-off tooling)
+scripts/ingestion/
+scripts/ml/*.py
+scripts/ml/*.pyc
+scripts/ml/__pycache__/
+
+# Python test suite (one-off validation)
+tests/python/

@@ -89,20 +89,35 @@ export interface MacroIndicator {
 
 // ─── Memoized universe ─────────────────────────────────────────────────────────
 let cached: LoadedUniverse | null = null;
-let macroMtime = 0;
+let cachedMarketSig = "";
+let cachedMacroSig = "";
+
+function fileSig(path: string): string {
+  try {
+    const st = statSync(path);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return "";
+  }
+}
 
 function reloadIfNeeded() {
-  const f = join(process.cwd(), "src/lib/scoring/seed/real-macro-data.json");
-  try {
-    const st = readFileSync(f, "utf-8").length;
-    if (cached && st === macroMtime) return cached;
-  } catch {
-    // fallback: just return whatever we have
+  const marketFile = join(process.cwd(), "src/lib/scoring/seed/real-market-data.json");
+  const macroFile = join(process.cwd(), "src/lib/scoring/seed/real-macro-data.json");
+
+  const marketSig = fileSig(marketFile);
+  const macroSig = fileSig(macroFile);
+
+  // Cache invalid only if both files are unchanged
+  if (cached && marketSig === cachedMarketSig && macroSig === cachedMacroSig) {
+    return cached;
   }
+
   const u = loadRealUniverse();
   if (u) {
     cached = u;
-    macroMtime = readFileSync(f, "utf-8").length;
+    cachedMarketSig = marketSig;
+    cachedMacroSig = macroSig;
   }
   return cached;
 }
@@ -135,7 +150,7 @@ export function getTickerMeta(ticker: string): TickerMeta | null {
   const i = walk.info;
   return {
     ticker: walk.ticker,
-    name: i?.sector ? walk.ticker : walk.ticker,
+    name: walk.ticker,
     sector: walk.sector,
     industry: walk.industry,
     marketCap: i?.marketCap ?? walk.marketCap,

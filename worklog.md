@@ -1,50 +1,78 @@
-# BedaanWaves — Build Worklog (Updated)
+# BedaanWaves — Build Worklog (Updated 2026-09-22)
 
-## All Calculations Complete (2026-09-19)
+## ML Trainer Integration & Coefficient Pipeline Fix
 
-### Task: Complete all V2 scoring calculations for ALL 790 NASDAQ symbols
+### Problem
+The Python ML trainer (`scripts/ml/train.py`) was dead code. `auto-refresh.sh`
+invoked it with `artifacts/training_samples.json` as input, but that file was
+never generated. `learner.ts`'s `loadCoefficients()` read from an empty
+`artifacts/coefficient_store/` directory. Production never used the ML ensemble
+— it fell through to a uniform-weight cold-start every time.
 
-#### State Before:
-- 790 symbols in database
-- 678 symbols had score snapshots (from BATCH-0 seed pipeline)
-- 112 symbols had NO snapshots (BATCH-1 without MarketBar OHLCV data)
-- 26 BATCH-1 symbols had zero MarketBar data (delisted/obscure)
+Additionally, `train.py` produced weights keyed as generic `feat_0..feat_49`
+instead of actual level keys (`fundamental`, `technical/trend`,
+`fundamental/quality/profitability.roe`, etc.), so downstream code couldn't
+look them up by name.
 
-#### Actions Taken:
-1. Built comprehensive scoring script using tsx + Prisma Client
-2. Imported V2 scoring engine (engine.ts), transforms.ts, metric-universe.ts directly
-3. For 86 symbols with MarketBar OHLCV data:
-   - Computed all 173 sub-aspect indicators from real OHLCV candles
-   - Ran V2 scoring engine per day (60-day window) for cross-sectional scoring
-   - Saved full L1→L4 hierarchy (dimension, sub-dimension, aspect, sub-aspect scores)
-   - Trained per-symbol coefficients with neutral fallback for cold-start
-   - Computed conformal CI, stability index, grades, signals per spec §5
-4. For 26 symbols with no MarketBar data:
-   - Created neutral snapshots (all sub-aspects = 50.0, coverage = 0)
-   - Marked dataQuality = "NO_DATA", isProcessed = false
-5. Fixed 4 corrupted coverage values (BGUS, BID, BIOT, BLSM) from prior seed
+### Actions Taken
 
-#### Final State:
-- 790/790 symbols have score snapshots ✅
-- 37,589 total snapshots (avg 47.6 per symbol)
-- 158 sub-aspects per symbol (all indicators present)
-- All scores in [0,100] range ✅
-- All coverage values in [0,1] ✅
-- All grades consistent with spec grade bands ✅
-- 37,559 VALIDATED, 30 NO_DATA, 0 INSUFFICIENT
-- 786/790 symbols have ML-trained coefficients
-- AAPL verified: overall=60.96 NEUTRAL, price=$332.41, cov=1.000 ✅
+1. **`scripts/ml/train.py` — fixed weight calculation**
+   - Weights are now keyed by the actual level keys (matching `METRIC_UNIVERSE`),
+     not generic `feat_N` names.
+   - Per-key weight = `|corr(key_score, ensemble OOF prediction)|`, computed from
+     RF + GBM + HGB cross-validated predictions — model-informed importance,
+     not raw feature importances.
+   - Added `_parse_ts()` fallback so `build_features` doesn't crash on missing
+     timestamps.
 
-#### Verification Results:
-- ✅ All 790 symbols have snapshots
-- ✅ Complete L1-L4 hierarchy in all snapshots
-- ✅ All scores in valid range (0-100)
-- ✅ All grades valid and consistent with overall score
-- ✅ No coverage > 1
-- ✅ AAPL has all 173 sub-aspects with valid scores
-- ✅ Grade consistency verified across 100 sample symbols
+2. **`scripts/ml/train.py` — verified end-to-end**
+   - Synthetic test: 2 tickers × 4 levels. Weights valid, non-uniform, divergent
+     across tickers. All checks passed.
 
-#### Files Created/Modified:
-- scripts/score_all_symbols.ts - V2 scoring pipeline for unscored symbols
-- scripts/create_neutral.ts - Neutral snapshots for no-data symbols
-- scripts/fix_coverage.ts - Fix corrupted coverage values
+3. **`src/lib/scoring/seed/orchestrator.ts` — wired up the trainer**
+   - Serializes `trainingSamplesByTicker` → `artifacts/training_samples.json`
+   - Invokes `scripts/ml/train.py` with all tickers, output to
+     `artifacts/coefficient_store/`
+   - Loads trained coefficients; falls back to TypeScript `|corr|` learner if
+     Python fails
+   - Records `trainedBy: "python-ensemble"` or `"typescript-corr"` in meta
+
+4. **`src/lib/scoring/learner.ts` — restored per-symbol learning**
+   - Restored the `|corr(score, forward_return)|` learning at all 4 levels that
+     commit `756d1dd` had deleted
+   - Each level learned independently: L4 sub-aspects, L3 aspects, L2
+     sub-dimensions, L1 dimensions
+   - Cold start (<50 samples) still uses uniform `1/n` fallback
+
+5. **`src/lib/scoring/engine.ts` — bundle validation**
+   - Strips the `level` metadata key before `isValidCoefficients`, so bundles
+     with extra fields aren't rejected
+
+6. **`scripts/auto-refresh.sh` — single entry point**
+   - Now delegates to `npx tsx scripts/run-orchestrator.ts` for scoring + training
+     instead of calling `train.py` directly with a non-existent input file
+
+7. **`scripts/run-orchestrator.ts` — new entry point**
+   - Thin wrapper around `seedIfNeeded()` for the refresh pipeline
+
+8. **`prisma/schema.prisma` — drift detection + retrain scheduling**
+   - Added `nextRetrainAt`, `retrainCount` to `Symbol`
+   - Added `RetrainSchedule` model (trigger: drift | calendar | manual)
+   - Added `RetrainRun` model (drift history per ticker/level)
+   - Orchestrator now compares current driftPsi against the previous training
+     run and schedules a retrain when drift exceeds the threshold or the
+     calendar interval elapses
+
+### Verification
+- `bun run typecheck` — passes
+- `bun run test` — 46/46 pass
+- `bun run test:ml` — 8/8 pass
+- `python -m unittest` — 14/14 pass (1 skipped)
+- End-to-end trainer test: 2 tickers × 4 levels, weights valid, non-uniform,
+  divergent across tickers
+
+### Remaining
+- Full end-to-end run of the orchestrator against real data has not been
+  executed yet. `artifacts/training_samples.json` and
+  `artifacts/coefficient_store/` are still empty. Requires running the seed
+  (e.g. `POST /api/seed?force=true`) to confirm the integration works.

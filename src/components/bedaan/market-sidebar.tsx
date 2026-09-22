@@ -30,16 +30,23 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
   });
 
   // Fetch top symbols by market cap for Quick Access
+  // Show all symbols with explicit missing-data status (spec: show symbols without
+  // market cap with explicit "NO_DATA" status rather than hiding them).
   const topSymbolsQ = useQuery({
     queryKey: ["top-symbols"],
     queryFn: async () => {
       const r = await fetch("/api/symbols?limit=50");
       const j = await r.json();
-      // Only rank symbols with REAL market cap data (anti-mock: never use a synthetic value).
-      return (j.symbols ?? [])
+      // Anti-mock: separate real-data symbols from no-data symbols.
+      // Show both, with explicit status for missing-data symbols.
+      const realData = (j.symbols ?? [])
         .filter((s: { marketCap: number }) => s.marketCap > 0)
         .sort((a: { marketCap: number }, b: { marketCap: number }) => b.marketCap - a.marketCap)
-        .slice(0, 10);
+        .slice(0, 8);
+      const noData = (j.symbols ?? [])
+        .filter((s: { marketCap: number }) => s.marketCap <= 0)
+        .slice(0, 2);
+      return { realData, noData };
     },
   });
 
@@ -219,11 +226,21 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
           <Skeleton className="h-16 w-full" />
         ) : (
           <div className="flex flex-wrap gap-1">
-            {topSymbolsQ.data?.map((t: { ticker: string }) => (
+            {(topSymbolsQ.data?.realData ?? []).map((t: { ticker: string; processingStatus: string }) => (
               <button
                 key={t.ticker}
                 onClick={() => onSymbolSelect?.(t.ticker)}
                 className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] hover:bg-primary hover:text-primary-foreground"
+              >
+                {t.ticker}
+              </button>
+            ))}
+            {(topSymbolsQ.data?.noData ?? []).map((t: { ticker: string; processingStatus: string }) => (
+              <button
+                key={t.ticker}
+                onClick={() => onSymbolSelect?.(t.ticker)}
+                className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] hover:bg-primary hover:text-primary-foreground opacity-50"
+                title={t.processingStatus ?? "NO_DATA"}
               >
                 {t.ticker}
               </button>

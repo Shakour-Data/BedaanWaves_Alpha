@@ -124,7 +124,7 @@
       "source": "Reuters",
       "url": "https://reuters.com/oil-opec",
       "publishedAt": "2026-09-17T03:34:52.849468",
-      "sentiment": "bearish",
+      "sentiment": "bullish",
       "severity": "critical",
       "tickers": [
         "USO",
@@ -137,7 +137,7 @@
       "source": "Bloomberg",
       "url": "https://bloomberg.com/gold-record",
       "publishedAt": "2026-09-17T03:34:52.849468",
-      "sentiment": "neutral",
+      "sentiment": "bullish",
       "severity": "notable",
       "tickers": [
         "GLD"
@@ -283,7 +283,7 @@
       "source": "BLS",
       "url": "https://bls.gov/cpi",
       "publishedAt": "2026-09-17T03:34:52.849468",
-      "sentiment": "neutral",
+      "sentiment": "bearish",
       "severity": "critical",
       "tickers": [
         "QQQ",

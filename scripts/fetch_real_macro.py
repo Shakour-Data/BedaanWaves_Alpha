@@ -22,10 +22,12 @@ OUT_FILE = Path("src/lib/scoring/seed/real-macro-data.json")
 
 # yfinance market macro — fetch individually (batch download fails for ^tickers)
 # Updated 2026-09-18: added missing indicators (5y, 13w, EUR, gold, VIX)
+# Added 2026-09-20: 2Y treasury yield (^UST2Y)
 YF_MACRO = [
     ("^TNX", "treasury_yield_10y"),
     ("^TYX", "treasury_yield_30y"),
     ("^FVX", "treasury_yield_5y"),
+    ("^UST2Y", "treasury_yield_2y"),
     ("^IRX", "treasury_yield_13w"),
     ("DX-Y.NYB", "dollar_index"),
     ("EURUSD=X", "usd_eur"),

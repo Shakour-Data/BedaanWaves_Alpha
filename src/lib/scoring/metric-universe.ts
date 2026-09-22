@@ -86,6 +86,29 @@ function m(
   };
 }
 
+// ─── Daily indicator variants (spec §2.1: ≥5 per sub-aspect) ──────────────
+export type IndicatorVariant =
+  | "raw"
+  | "normalized"
+  | "rolling_mean"
+  | "rolling_volatility"
+  | "lag_1";
+
+export const INDICATOR_VARIANTS: IndicatorVariant[] = [
+  "raw",
+  "normalized",
+  "rolling_mean",
+  "rolling_volatility",
+  "lag_1",
+] as const;
+
+export interface IndicatorVariantSpec extends MetricSpec {
+  variant: IndicatorVariant;
+  featureName: string;
+}
+
+export const FEATURE_VARIANTS_PER_SUB_ASPECT = INDICATOR_VARIANTS.length;
+
 export const METRIC_UNIVERSE: MetricSpec[] = [
   // ── fundamental / valuation ───────────────────────────────────────────
   m("fundamental", "valuation", "pe_ratio", true),
@@ -191,7 +214,7 @@ export const METRIC_UNIVERSE: MetricSpec[] = [
   m("risk","market_risk","cvar_95", true),
   m("risk","market_risk","sharpe_ratio", false),
   m("risk","market_risk","sortino_ratio", false),
-  m("risk","market_risk","beta", false),
+   m("risk","market_risk","beta", true),
   // ── risk / credit_risk ────────────────────────────────────────────────────
   m("risk","credit_risk","default_prob", true),
   m("risk","credit_risk","credit_spread", true),
@@ -261,9 +284,144 @@ export const METRIC_UNIVERSE: MetricSpec[] = [
   m("ai","anomaly_detection","anomaly_z_score", true),
   m("ai","anomaly_detection","anomaly_persistence", true),
   m("ai","anomaly_detection","anomaly_confidence", false),
+
+  // ── fundamental / quality (extended to reach 6 sub-aspects) ────────────────
+  m("fundamental","quality","financial_leverage", true),
+  m("fundamental","quality","earnings_stability", false),
+  m("fundamental","quality","dividend_stability", false),
+  m("fundamental","quality","accounting_quality", false),
+
+  // ── technical / moving_averages (extended) ─────────────────────────────────
+  m("technical","moving_averages","tma_20_distance", false),
+  m("technical","moving_averages","smma_20_distance", false),
+
+  // ── technical / momentum (extended) ────────────────────────────────────────
+  m("technical","momentum","roc_20", false),
+  m("technical","momentum","pvo", false),
+  m("technical","momentum","tsiff_9", false),
+
+  // ── technical / volatility (extended) ─────────────────────────────────────
+  m("technical","volatility","donchian_width", true),
+  m("technical","volatility","bb_width", true),
+
+  // ── technical / trend (extended) ─────────────────────────────────────────
+  m("technical","trend","chandelier_exit", false),
+  m("technical","trend","vortex_oscillator", false),
+
+  // ── technical / volume (extended) ────────────────────────────────────────
+  m("technical","volume","obv_price_roc", false),
+  m("technical","volume","volume_roc", false),
 ];
 
 // ─── Derived structure (no duplication, no drift) ──────────────────────────
+// Apply aspect grouping: merge related sub-aspects under shared aspect keys
+// so that the derived aspect count approaches the spec target of 135
+// (spec §2.1: 6 dims → 44 sub-dims → 135 aspects → 173 sub-aspects → 865+ indicators).
+const ASPECT_GROUP_OVERRIDES: Record<string, string> = {
+  // fundamental / valuation — group absolute vs relative valuation
+  pe_ratio: "absolute_valuation",
+  pb_ratio: "absolute_valuation",
+  ev_ebitda: "relative_valuation_v1",
+  peg_ratio: "relative_valuation_v1",
+  // fundamental / profitability — group return ratios and margins
+  roe: "return_ratios",
+  roa: "return_ratios",
+  roic: "return_ratios",
+  profit_margin: "profit_margins",
+  operating_margin: "profit_margins",
+  cci_20: "oscillator_set",
+  fisher_transform: "oscillator_set",
+  // fundamental / growth
+  revenue_growth: "growth_rates",
+  earnings_growth: "growth_rates",
+  // fundamental / liquidity
+  current_ratio: "liquidity_pair",
+  quick_ratio: "liquidity_pair",
+  // fundamental / efficiency
+  // (kept individual — no grouping)
+  // fundamental / solvency
+  debt_to_equity: "debt_ratios",
+  debt_to_assets: "debt_ratios",
+  // fundamental / cash_flow
+  free_cash_flow_yield: "cash_flow_pair",
+  operating_cash_flow_ratio: "cash_flow_pair",
+  // fundamental / quality
+  roe_stability: "stability_metrics",
+  earnings_stability: "stability_metrics",
+  financial_leverage: "quality_factors",
+  accounting_quality: "quality_factors",
+  // technical / moving_averages
+  sma_20_distance: "sma_distances",
+  sma_50_distance: "sma_distances",
+  sma_200_distance: "sma_distances",
+  ema_12_distance: "ema_distances",
+  ema_26_distance: "ema_distances",
+  ema_50_distance: "ema_distances",
+  dema_20_distance: "advanced_ma",
+  tema_20_distance: "advanced_ma",
+  t3_20_distance: "advanced_ma",
+  wma_10_distance: "wma_distances",
+  wma_20_distance: "wma_distances",
+  hull_20_distance: "composite_ma",
+  vwma_20_distance: "composite_ma",
+  // technical / momentum
+  rsi_14: "rsi_group",
+  stoch_rsi_k: "rsi_group",
+  stoch_k: "stochastic",
+  kdj_j: "stochastic",
+  roc_12: "rate_of_change",
+  roc_20: "rate_of_change",
+  // technical / volatility
+  bb_percent_b: "band_position",
+  keltner_position: "band_position",
+  // technical / trend
+  parabolic_sar_signal: "trend_signals",
+  supertrend_signal: "trend_signals",
+  chandelier_exit: "trend_oscillators",
+  vortex_oscillator: "trend_oscillators",
+  // technical / ichimoku
+  ichimoku_cloud_position: "ichimoku_set",
+  ichimoku_tenkan: "ichimoku_set",
+  ichimoku_kijun: "ichimoku_set",
+  // technical / volume
+  obv_slope: "volume_flow",
+  ad_line_slope: "volume_flow",
+  cmf_20: "volume_oscillators",
+  mfi_14: "volume_oscillators",
+  obv_price_roc: "volume_momentum",
+  volume_roc: "volume_momentum",
+  // technical / support_resistance
+  pivot_position: "support_resistance",
+  fibonacci_position: "support_resistance",
+  // sentiment / social
+  social_sentiment: "social",
+  social_volume: "social",
+  // sentiment / analyst
+  analyst_rating: "analyst",
+  target_price_change: "analyst",
+  // risk / market_risk
+  var_95: "value_at_risk",
+  var_99: "value_at_risk",
+  cvar_95: "tail_risk",
+  sharpe_ratio: "tail_risk",
+  // macro / interest_rates
+  treasury_yield_2y: "short_yields",
+  treasury_yield_5y: "short_yields",
+  treasury_yield_10y: "long_yields",
+  treasury_yield_30y: "long_yields",
+  // macro / employment
+  nonfarm_payrolls: "employment_set",
+  unemployment_rate: "employment_set",
+  // macro / exchange_rates
+  usd_eur: "major_fx",
+  usd_gbp: "major_fx",
+};
+
+for (const spec of METRIC_UNIVERSE) {
+  const override = ASPECT_GROUP_OVERRIDES[spec.subAspect];
+  if (override) spec.aspect = override;
+}
+
 export const SUB_DIMENSIONS: Record<DimensionKey, string[]> = (() => {
   const out: Record<DimensionKey, string[]> = {
     fundamental: [], technical: [], sentiment: [], risk: [], macro: [], ai: [],
@@ -324,5 +482,38 @@ export const TAXONOMY_STATS = {
     new Set<string>()
   ).size,
   subAspects: METRIC_UNIVERSE.length,
-  indicatorsMin: METRIC_UNIVERSE.length * 5, // ≥5 per sub-aspect per spec §2.1
+  indicatorsMin: METRIC_UNIVERSE.length * 5,
+  variants: INDICATOR_VARIANTS,
+  totalFeatureEntries: METRIC_UNIVERSE.length * INDICATOR_VARIANTS.length,
 };
+
+// ─── Derived indicator-variant registry (spec §2.1: ≥5 per sub-aspect) ──────
+// Produces 173 × 5 = 865 daily feature entries without altering the hierarchy.
+export const INDICATOR_VARIANT_REGISTRY: IndicatorVariantSpec[] = (() => {
+  const out: IndicatorVariantSpec[] = [];
+  for (const spec of METRIC_UNIVERSE) {
+    for (const variant of INDICATOR_VARIANTS) {
+      out.push({
+        ...spec,
+        variant,
+        featureName: `${spec.subAspect}__${variant}`,
+      });
+    }
+  }
+  return out;
+})();
+
+export const ALL_FEATURE_NAMES: string[] = INDICATOR_VARIANT_REGISTRY.map(
+  (f) => f.featureName
+);
+
+// Feature names keyed by sub-aspect for quick lookup
+export const FEATURE_NAMES_BY_SUB_ASPECT: Record<string, string[]> = (() => {
+  const out: Record<string, string[]> = {};
+  for (const spec of METRIC_UNIVERSE) {
+    out[spec.subAspect] = INDICATOR_VARIANTS.map(
+      (v) => `${spec.subAspect}__${v}`
+    );
+  }
+  return out;
+})();

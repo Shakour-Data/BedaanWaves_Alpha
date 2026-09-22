@@ -349,7 +349,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [grade, setGrade] = useState("All");
   const [processingStatus, setProcessingStatus] = useState("All");
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize] = useState(100);
   const [sort, setSort] = useState<RankingColumnKey>("overall");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [columnFilters, setColumnFilters] = useState<

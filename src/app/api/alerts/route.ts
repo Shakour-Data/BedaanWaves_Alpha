@@ -30,14 +30,21 @@ export async function POST(req: NextRequest) {
   const metric = String(body.metric ?? "overall");
   const condition = String(body.condition ?? "crosses_above");
   const threshold = Number(body.threshold);
-  if (!ticker || !threshold) {
-    return NextResponse.json({ error: "ticker + threshold required" }, { status: 400 });
+  if (!ticker || ticker.length > 10 || !/^[A-Z]+$/.test(ticker)) {
+    return NextResponse.json({ error: "Valid ticker required (uppercase, max 10 chars)" }, { status: 400 });
+  }
+  if (!Number.isFinite(threshold) || Math.abs(threshold) > 1e12) {
+    return NextResponse.json({ error: "Valid numeric threshold required" }, { status: 400 });
   }
   const sym = await db.symbol.findUnique({ where: { ticker } });
   if (!sym) return NextResponse.json({ error: "ticker not in universe" }, { status: 404 });
   const validMetrics = ["overall","fundamental","technical","sentiment","risk","macro","ai"];
   if (!validMetrics.includes(metric)) {
     return NextResponse.json({ error: "invalid metric" }, { status: 400 });
+  }
+  const validConditions = ["crosses_above", "crosses_below", "above", "below", "equals"];
+  if (!validConditions.includes(condition)) {
+    return NextResponse.json({ error: "invalid condition" }, { status: 400 });
   }
   const alert = await db.alert.create({
     data: { ticker, metric, condition, threshold, active: true },

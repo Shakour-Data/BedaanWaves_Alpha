@@ -1,12 +1,19 @@
 // POST /api/refresh — trigger a full data refresh (fetch latest OHLCV + macro + news + re-score + live prices)
 import { NextRequest, NextResponse } from "next/server";
-import { execSync } from "child_process";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { execFileSync } from "child_process";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 
-const REFRESH_FILE = "/tmp/bedaan-last-refresh.txt";
-const REFRESHING_FILE = "/tmp/bedaan-refreshing.lock";
-const PRICE_REFRESH_FILE = "/tmp/bedaan-prices-refreshing.lock";
+const STATE_DIR = join(process.cwd(), ".kilo", "state");
+const REFRESH_FILE = join(STATE_DIR, "last-refresh.txt");
+const REFRESHING_FILE = join(STATE_DIR, "refreshing.lock");
+const PRICE_REFRESH_FILE = join(STATE_DIR, "prices-refreshing.lock");
+
+function ensureStateDir() {
+  if (!existsSync(STATE_DIR)) {
+    import("fs").then((fs) => fs.mkdirSync(STATE_DIR, { recursive: true }));
+  }
+}
 
 export async function GET(req: NextRequest) {
   let lastRefresh: string | null = null;
@@ -60,24 +67,23 @@ export async function POST(req: NextRequest) {
   }
 
   // Create lock file
+  ensureStateDir();
   writeFileSync(REFRESHING_FILE, new Date().toISOString());
 
   try {
-    // Run the auto-refresh script in the background (non-blocking)
-    // The script will: fetch OHLCV + macro + news, then re-score
-    const refreshScript = join(process.cwd(), "scripts/auto-refresh.sh");
-    if (!existsSync(refreshScript)) {
-      return NextResponse.json(
-        { ok: false, error: "Refresh script not found. Run setup first." },
-        { status: 503 }
-      );
-    }
-    const result = execSync(
-      `bash ${refreshScript} 2>&1`,
+    // Run the ingestion + scoring pipeline
+    const result = execFileSync(
+      "python",
+      [
+        "-m", "scripts.ingestion.ingest_real_data",
+        "--full-universe",
+        "--output-dir", join(process.cwd(), "src/lib/scoring/seed"),
+      ],
       {
         timeout: 600000,
         cwd: process.cwd(),
         encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
       }
     );
 
@@ -101,7 +107,9 @@ export async function POST(req: NextRequest) {
   } finally {
     // Remove lock file
     try {
-      execSync(`rm -f ${REFRESHING_FILE}`);
+      if (existsSync(REFRESHING_FILE)) {
+        unlinkSync(REFRESHING_FILE);
+      }
     } catch {
       // ignore
     }

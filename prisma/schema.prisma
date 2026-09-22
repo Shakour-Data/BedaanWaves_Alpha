@@ -21,17 +21,21 @@ model Symbol {
   batchId          String?
   generationId     String?
   dataQuality      String?          @default("UNKNOWN")
+  nextRetrainAt    DateTime?        // scheduled retrain after drift detection
+  retrainCount     Int              @default(0)
   alerts           Alert[]
   coefficients     Coefficient[]
   newsMentions     NewsItemSymbol[]
   metrics          ScoreSnapshot[]
   watchlistEntries WatchlistEntry[]
+  retrainRuns     RetrainRun[]
 
   @@index([sector])
   @@index([marketCap])
   @@index([generationId], map: "idx_symbol_generationId")
   @@index([batchId], map: "idx_symbol_batchId")
   @@index([processingStatus], map: "idx_symbol_processingStatus")
+  @@index([nextRetrainAt], map: "idx_symbol_nextRetrainAt")
 }
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
@@ -223,4 +227,45 @@ model TrainingRun {
   @@index([startedAt])
   @@index([batchId], map: "idx_tr_batchId")
   @@index([generationId], map: "idx_tr_generationId")
+}
+
+/// Scheduled retrain triggered by drift detection (PSI) or calendar.
+model RetrainSchedule {
+  id            String    @id @default(cuid())
+  ticker        String
+  trigger       String    // "drift" | "calendar" | "manual"
+  driftPsi      Float?
+  scheduledAt   DateTime  @default(now())
+  executedAt    DateTime?
+  status        String    @default("PENDING")  // PENDING | RUNNING | DONE | SKIPPED
+  result        String?
+  generationId  String?
+  batchId       String?
+
+  @@index([ticker])
+  @@index([scheduledAt])
+  @@index([status])
+  @@index([batchId], map: "idx_rs_batchId")
+}
+
+/// Record of a completed retrain run for drift history.
+model RetrainRun {
+  id            String   @id @default(cuid())
+  ticker        String
+  level         String
+  startedAt     DateTime @default(now())
+  durationMs    Int
+  sampleCount   Int
+  driftPsi      Float?
+  prevDriftPsi  Float?
+  status        String
+  version       String
+  notes         String?
+  generationId  String?
+  batchId       String?
+  symbol        Symbol   @relation(fields: [ticker], references: [ticker], onDelete: Cascade)
+
+  @@index([ticker])
+  @@index([startedAt])
+  @@index([batchId], map: "idx_rr_batchId")
 }
