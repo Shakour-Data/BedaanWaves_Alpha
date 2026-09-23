@@ -155,6 +155,11 @@ export function normalizeIndicatorScore(
   v: number | null
 ): number {
   if (v === null || Number.isNaN(v)) return 50.0;
+  // Sentiment sub-aspects are already on a 0..100 scale (from real-news
+  // computation). Just clamp — no cross-sectional re-ranking needed.
+  if (["news_sentiment_avg", "news_volume", "social_sentiment", "social_volume", "analyst_rating", "target_price_change"].includes(dbField)) {
+    return clamp(v, 0, 100);
+  }
   // Bounded: rsi_14, stoch_k, mfi_14 → 0..100
   if (["rsi_14", "stoch_k", "stoch_rsi_k", "mfi_14"].includes(dbField)) {
     return clamp(v, 0, 100);

@@ -52,12 +52,14 @@ async function runPythonAIInference(
   priceChangesHistory: number[],
   marketCapsHistory: number[]
 ): Promise<AIInferenceResult> {
+  // Convert Record<string, number>[] to number[][] for Python consumption.
+  // Using explicit Array.from + Object.values for correctness.
   const input = {
     ticker,
-    dim_scores_history: Object.values(dimScoresHistory).map(d => Object.values(d)),
-    subdim_scores_history: Object.values(subDimScoresHistory).map(d => Object.values(d)),
-    aspect_scores_history: Object.values(aspectScoresHistory).map(d => Object.values(d)),
-    subaspect_scores_history: Object.values(subAspectScoresHistory).map(d => Object.values(d)),
+    dim_scores_history: Array.from(dimScoresHistory).map(d => Object.values(d)),
+    subdim_scores_history: Array.from(subDimScoresHistory).map(d => Object.values(d)),
+    aspect_scores_history: Array.from(aspectScoresHistory).map(d => Object.values(d)),
+    subaspect_scores_history: Array.from(subAspectScoresHistory).map(d => Object.values(d)),
     captured_ats: capturedAts,
     vols_history: volsHistory,
     vol_values_history: volValuesHistory,
@@ -74,7 +76,7 @@ async function runPythonAIInference(
       maxBuffer: 1024 * 1024,
     });
     return JSON.parse(result.trim());
-  } catch {
+  } catch (err) {
     // Return nulls on error (will default to 50.0 at L4)
     return {
       expected_return: null,
@@ -101,6 +103,7 @@ export type SeedOptions = {
   force?: boolean;
   offset?: number;
   limit?: number;
+  incremental?: boolean;
 };
 
 export interface SeedResult {
@@ -116,6 +119,7 @@ export interface SeedResult {
 export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResult> {
   const t0 = Date.now();
   const force = options.force ?? false;
+  const incremental = options.incremental ?? false;
   const offset = Number.isFinite(options.offset)
     ? Math.max(0, Math.floor(options.offset ?? 0))
     : 0;
@@ -126,7 +130,7 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
 
   const snapshotCount = await db.scoreSnapshot.count();
   const hasSeedData = !force && snapshotCount > 0;
-  if (hasSeedData) {
+  if (hasSeedData && !incremental) {
     const [symbols, coefficients, news, trainingRuns] = await Promise.all([
       db.symbol.count(),
       db.coefficient.count(),
@@ -144,7 +148,7 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
     };
   }
 
-  if (force) {
+  if (force && !incremental) {
     console.log("[seed] FORCE mode: existing seed data will be deleted");
     await db.newsItemSymbol.deleteMany();
     await db.newsItem.deleteMany();
@@ -156,6 +160,10 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
     await db.scoreSnapshot.deleteMany();
     await db.marketBar.deleteMany();
     await db.symbol.deleteMany();
+  }
+
+  if (incremental && hasSeedData) {
+    console.log("[seed] INCREMENTAL mode: scoring only the latest day");
   }
 
   const fullUniverse = loadRealUniverse();
@@ -233,15 +241,18 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
       industry: walk.industry,
       marketCap: walk.marketCap,
       isEtf: walk.isEtf,
+      dataQuality: "INSUFFICIENT",
     };
   });
   try {
-    await db.symbol.createMany({ data: symbolRows });
+    if (!incremental) {
+      await db.symbol.createMany({ data: symbolRows });
+    }
   } catch {
-    // Ignore duplicates
+    // Ignore duplicates (incremental mode re-uses existing symbols)
   }
 
-  // 2b. Persist MarketBar data (OHLCV from real-market-data.json) for candle count filter
+  // 2b. Persist MarketBar data — skip in incremental mode (already exists)
   const marketBarRows: Array<{
     ticker: string;
     date: string;
@@ -278,10 +289,21 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
       });
     }
   }
-  if (marketBarRows.length > 0) {
+  if (marketBarRows.length > 0 && !incremental) {
     console.log(`[seed] Inserting ${marketBarRows.length} MarketBar rows for ${universe.tickers.length} tickers`);
     try {
-      await db.marketBar.createMany({ data: marketBarRows });
+      const sanitizedBars = marketBarRows.map((bar) => ({
+        ...bar,
+        open: Number.isFinite(bar.open) ? bar.open : 0,
+        high: Number.isFinite(bar.high) ? bar.high : 0,
+        low: Number.isFinite(bar.low) ? bar.low : 0,
+        close: Number.isFinite(bar.close) ? bar.close : 0,
+        volume: Number.isFinite(bar.volume) ? bar.volume : 0,
+      }));
+      for (let i = 0; i < sanitizedBars.length; i += 1000) {
+        const batch = sanitizedBars.slice(i, i + 1000);
+        await db.marketBar.createMany({ data: batch } as any);
+      }
     } catch (e) {
       console.warn("[seed] MarketBar insert failed (may already exist):", e);
     }
@@ -306,8 +328,8 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const dailyReturnsByTicker: Record<string, number[]> = {}; // ticker → returns[]
   const prevPrices: Record<string, number> = {};
 
-  const scoringDays = Math.min(SCORING_DAYS, universe.tradingDays.length);
-  console.log(`[seed] Scoring ${scoringDays} days for batch symbols`);
+  const scoringDays = Math.min(incremental ? 1 : SCORING_DAYS, universe.tradingDays.length);
+  console.log(`[seed] Scoring ${scoringDays} day(s) for batch symbols`);
 
   // Score the LAST `scoringDays` dates (most recent), not the first.
   // universe.tradingDays is already the last 90 dates (from loadRealUniverse),
@@ -382,114 +404,89 @@ macroSensitivities[ticker] = betas;
 
     // ─── AI Inference: Generate AI dimension metrics using trained ML models ───
     // Per spec §4: AI metrics come from the trained ensemble models
-    // We build the 50-dim feature vector from historical scores and run inference
+    // Run on the last scoring day to avoid excessive Python subprocess spawns.
+    // Per spec §4.3: EACH LEVEL is learned INDEPENDENTLY.
+    // IMPORTANT: AI inference runs BEFORE scoreMarket() so injected metrics
+    // affect the current day's scores.
     const aiMetricsByTicker: Record<string, AIInferenceResult> = {};
-    
-    // Collect historical score data for all tickers for AI inference
-    // We need to track dim_scores, subdim_scores, aspect_scores, subaspect_scores over time
-    for (const ticker of universe.tickers) {
-      const walk = universe.walks.get(ticker);
-      if (!walk) continue;
-      const barIdx = walk.ohlcv.findIndex((b) => b.date === day.date);
-      if (barIdx < 0) continue;
-      
-      // Check if we have trained models and enough samples
-      const artifacts = loadAIModels(ticker);
-      const sampleCount = artifacts?.meta?.sampleCount ?? 0;
-      if (sampleCount >= 50 && artifacts) {
-        // We need historical scores for this ticker to build the 50-dim feature vector
-        // Build history from recentOverallsByTicker and the snapshots we've computed so far
-        // For now, we'll use a simplified approach - if we have enough history, run inference
-        
-        // The historical data needed:
-        // - dim_scores_history: array of {fundamental, technical, sentiment, risk, macro, ai} per day
-        // - subdim_scores_history: array of 44 sub-dim scores per day
-        // - aspect_scores_history: array of 135 aspect scores per day
-        // - subaspect_scores_history: array of 173 sub-aspect scores per day
-        // - captured_ats: timestamps
-        // - vols, vol_values, price_changes, market_caps: market context
-        
-        // We'll accumulate this data from the snapshots we've already computed
-        // For the first few days, we won't have enough history, so AI metrics will be null (50.0)
-      }
-    }
+    const shouldRunAIInference = i === scoringDays - 1;
 
-    // For now, run inference for tickers with sufficient history
-    // We need to collect the historical data from allSnapshots
-    const historicalScores: Record<string, {
-      dim_scores: Record<string, number>[];
-      subdim_scores: Record<string, number>[];
-      aspect_scores: Record<string, number>[];
-      subaspect_scores: Record<string, number>[];
-      captured_ats: string[];
-      vols: number[];
-      vol_values: number[];
-      price_changes: number[];
-      market_caps: number[];
-    }> = {};
-    
-    // Build historical data from allSnapshots
-    for (const snap of allSnapshots) {
-      if (!historicalScores[snap.ticker]) {
-        historicalScores[snap.ticker] = {
-          dim_scores: [],
-          subdim_scores: [],
-          aspect_scores: [],
-          subaspect_scores: [],
-          captured_ats: [],
-          vols: [],
-          vol_values: [],
-          price_changes: [],
-          market_caps: [],
-        };
+    if (shouldRunAIInference) {
+      // Build historical data from allSnapshots (previous days' scores)
+      const historicalScores: Record<string, {
+        dim_scores: Record<string, number>[];
+        subdim_scores: Record<string, number>[];
+        aspect_scores: Record<string, number>[];
+        subaspect_scores: Record<string, number>[];
+        captured_ats: string[];
+        vols: number[];
+        vol_values: number[];
+        price_changes: number[];
+        market_caps: number[];
+      }> = {};
+
+      for (const snap of allSnapshots) {
+        if (!historicalScores[snap.ticker]) {
+          historicalScores[snap.ticker] = {
+            dim_scores: [],
+            subdim_scores: [],
+            aspect_scores: [],
+            subaspect_scores: [],
+            captured_ats: [],
+            vols: [],
+            vol_values: [],
+            price_changes: [],
+            market_caps: [],
+          };
+        }
+        const h = historicalScores[snap.ticker];
+        h.dim_scores.push(JSON.parse(snap.dimensionScores));
+        h.subdim_scores.push(JSON.parse(snap.subDimensionScores));
+        h.aspect_scores.push(JSON.parse(snap.aspectScores));
+        h.subaspect_scores.push(JSON.parse(snap.subAspectScores));
+        h.captured_ats.push(snap.capturedAt);
+        h.vols.push(snap.price * 0.01); // proxy volatility
+        h.vol_values.push(snap.volume);
+        h.price_changes.push(snap.priceChange);
+        h.market_caps.push(0); // would need market cap from symbol
       }
-      const h = historicalScores[snap.ticker];
-      h.dim_scores.push(JSON.parse(snap.dimensionScores));
-      h.subdim_scores.push(JSON.parse(snap.subDimensionScores));
-      h.aspect_scores.push(JSON.parse(snap.aspectScores));
-      h.subaspect_scores.push(JSON.parse(snap.subAspectScores));
-      h.captured_ats.push(snap.capturedAt);
-      h.vols.push(snap.price * 0.01); // proxy volatility
-      h.vol_values.push(snap.volume);
-      h.price_changes.push(snap.priceChange);
-      h.market_caps.push(0); // would need market cap from symbol
-    }
-    
-    // Run Python inference for tickers with enough history and trained models
-    for (const ticker of universe.tickers) {
-      const h = historicalScores[ticker];
-      if (!h || h.dim_scores.length < 10) continue; // Need minimum history
-      
-      const artifacts = loadAIModels(ticker);
-      const sampleCount = artifacts?.meta?.sampleCount ?? 0;
-      if (sampleCount < 50 || !artifacts) continue;
-      
-      try {
-        const aiResult = await runPythonAIInference(
-          ticker,
-          h.dim_scores,
-          h.subdim_scores,
-          h.aspect_scores,
-          h.subaspect_scores,
-          h.captured_ats,
-          h.vols,
-          h.vol_values,
-          h.price_changes,
-          h.market_caps
-        );
-        
-        aiMetricsByTicker[ticker] = aiResult;
-        
-        // Inject AI metrics into assetMetrics for this ticker
-        if (day.assetMetrics[ticker]) {
-          for (const [key, value] of Object.entries(aiResult)) {
-            if (value !== null) {
-              day.assetMetrics[ticker][key] = value;
+
+      // Run Python inference for tickers with enough history and trained models
+      for (const ticker of universe.tickers) {
+        const h = historicalScores[ticker];
+        if (!h || h.dim_scores.length < 10) continue; // Need minimum history
+
+        const artifacts = loadAIModels(ticker);
+        const sampleCount = artifacts?.meta?.sampleCount ?? 0;
+        if (sampleCount < 50 || !artifacts) continue;
+
+        try {
+          const aiResult = await runPythonAIInference(
+            ticker,
+            h.dim_scores,
+            h.subdim_scores,
+            h.aspect_scores,
+            h.subaspect_scores,
+            h.captured_ats,
+            h.vols,
+            h.vol_values,
+            h.price_changes,
+            h.market_caps
+          );
+
+          aiMetricsByTicker[ticker] = aiResult;
+
+          // Inject AI metrics into assetMetrics for this ticker BEFORE scoreMarket
+          if (day.assetMetrics[ticker]) {
+            for (const [key, value] of Object.entries(aiResult)) {
+              if (value !== null) {
+                day.assetMetrics[ticker][key] = value;
+              }
             }
           }
+        } catch {
+          // Inference failed, leave as null (defaults to 50.0 at L4)
         }
-      } catch {
-        // Inference failed, leave as null (defaults to 50.0 at L4)
       }
     }
 
@@ -578,9 +575,13 @@ macroSensitivities[ticker] = betas;
   // Prefer the Python ML ensemble trainer (RF + GBM + HGB, purged walk-forward
   // CV) when available; fall back to the TypeScript |corr| learner when the
   // trainer is unavailable (missing input, python error, etc.).
+  // In incremental mode, skip retraining — use existing coefficients.
+  const now = new Date();
+  const RETRAIN_CALENDAR_DAYS = 30;
   const coefficientRows: CoefficientRow[] = [];
   const trainingRuns: TrainingRunRow[] = [];
 
+  if (!incremental) {
   // Serialize training samples so the Python trainer can consume them.
   const trainingSamplesPath = await writeTrainingSamples(
     trainingSamplesByTicker
@@ -655,17 +656,20 @@ macroSensitivities[ticker] = betas;
         ? "python-ensemble trained"
         : "typescript-corr fallback",
     });
-  }
-
-  try {
-    await db.scoreSnapshot.createMany({ data: allSnapshots });
-  } catch {
-    // Ignore duplicates
-  }
+   }
 
   // 6. Persist coefficients
   try {
-    await db.coefficient.createMany({ data: coefficientRows });
+    const sanitizedCoeffs = coefficientRows.map((c) => ({
+      ...c,
+      sampleCount: Number.isFinite(c.sampleCount) ? c.sampleCount : 0,
+      oosR2: c.oosR2 !== null && Number.isFinite(c.oosR2) ? c.oosR2 : null,
+      oosIc: c.oosIc !== null && Number.isFinite(c.oosIc) ? c.oosIc : null,
+    }));
+    for (let i = 0; i < sanitizedCoeffs.length; i += 1000) {
+      const batch = sanitizedCoeffs.slice(i, i + 1000);
+      await db.coefficient.createMany({ data: batch } as any);
+    }
   } catch {
     // Ignore duplicates
   }
@@ -689,8 +693,6 @@ macroSensitivities[ticker] = betas;
   // training run's driftPsi. If drift has increased beyond the threshold,
   // schedule a retrain for the next refresh window.
   const RETRAIN_DRIFT_THRESHOLD = 0.25;
-  const RETRAIN_CALENDAR_DAYS = 30;
-  const now = new Date();
   const retrainRows: Array<{
     ticker: string;
     trigger: string;
@@ -774,10 +776,62 @@ macroSensitivities[ticker] = betas;
       // Ignore — drift history is advisory
     }
   }
+   } // end if (!incremental)
 
-  // 8. Update symbol processingStatus based on training outcome
+  // 6. Persist snapshots (always — including incremental mode)
+  try {
+    const sanitizedSnapshots = allSnapshots.map((s) => ({
+      ...s,
+      price: Number.isFinite(s.price) ? s.price : 0,
+      priceChange: Number.isFinite(s.priceChange) ? s.priceChange : 0,
+      volume: Number.isFinite(s.volume) ? s.volume : 0,
+      overall: Number.isFinite(s.overall) ? s.overall : 0,
+      ciLower: Number.isFinite(s.ciLower) ? s.ciLower : 0,
+      ciUpper: Number.isFinite(s.ciUpper) ? s.ciUpper : 0,
+      stabilityIndex: Number.isFinite(s.stabilityIndex) ? s.stabilityIndex : 0,
+      coverage: Number.isFinite(s.coverage) ? s.coverage : 0,
+    }));
+
+    // In incremental mode, filter out snapshots that already exist
+    let snapshotsToInsert = sanitizedSnapshots;
+    if (incremental && sanitizedSnapshots.length > 0) {
+      const existingKeys = new Set<string>();
+      const existing = await db.scoreSnapshot.findMany({
+        where: {
+          ticker: { in: sanitizedSnapshots.map((s) => s.ticker) },
+        },
+        select: { ticker: true, capturedAt: true },
+      });
+      for (const row of existing) {
+        existingKeys.add(`${row.ticker}:${row.capturedAt instanceof Date ? row.capturedAt.toISOString() : row.capturedAt}`);
+      }
+      snapshotsToInsert = sanitizedSnapshots.filter(
+        (s) => !existingKeys.has(`${s.ticker}:${s.capturedAt}`)
+      );
+    }
+
+    if (snapshotsToInsert.length > 0) {
+      for (let i = 0; i < snapshotsToInsert.length; i += 1000) {
+        const batch = snapshotsToInsert.slice(i, i + 1000);
+        await db.scoreSnapshot.createMany({ data: batch } as any);
+      }
+    }
+  } catch (e) {
+    console.warn("[seed] ScoreSnapshot insert failed:", e);
+  }
+
+  // 8. Update symbol processingStatus and dataQuality based on training outcome
   const scoredTickers = universe.tickers.filter((t) => (trainingSamplesByTicker[t]?.length ?? 0) >= 50);
   const coldStartTickers = universe.tickers.filter((t) => (trainingSamplesByTicker[t]?.length ?? 0) < 50);
+
+  // Resolve latest dataQuality per ticker from the snapshots just written.
+  // allSnapshots is ordered by day then ticker, so the last entry per ticker
+  // is the most recent.
+  const latestSnapDQ = new Map<string, string>();
+  for (let i = allSnapshots.length - 1; i >= 0; i--) {
+    const snap = allSnapshots[i];
+    latestSnapDQ.set(snap.ticker, snap.dataQuality);
+  }
 
   if (scoredTickers.length > 0) {
     await db.symbol.updateMany({
@@ -795,6 +849,23 @@ macroSensitivities[ticker] = betas;
     });
   }
 
+  // Backfill Symbol.dataQuality from latest snapshot dataQuality.
+  // Group tickers by dataQuality so we can use updateMany efficiently.
+  const dqGroups = new Map<string, string[]>();
+  for (const ticker of universe.tickers) {
+    const dq = latestSnapDQ.get(ticker) ?? "PROVISIONAL";
+    if (!dqGroups.has(dq)) dqGroups.set(dq, []);
+    dqGroups.get(dq)!.push(ticker);
+  }
+  for (const [dq, tickers] of dqGroups) {
+    if (tickers.length > 0) {
+      await db.symbol.updateMany({
+        where: { ticker: { in: tickers } },
+        data: { dataQuality: dq },
+      });
+    }
+  }
+
   // 9. News items (real recent market headlines)
   const news = generateRealNews(universe.tradingDays);
   const selectedTickerSet = new Set(universe.tickers);
@@ -808,6 +879,13 @@ macroSensitivities[ticker] = betas;
     ])
   );
   let newsCount = 0;
+  const existingNewsSymbolPairs = new Set(
+    (
+      await db.newsItemSymbol.findMany({
+        select: { newsItemId: true, ticker: true },
+      })
+    ).map((p) => `${p.newsItemId}:${p.ticker}`)
+  );
   for (const n of news) {
     const relatedTickers = n.tickers.filter((ticker) => selectedTickerSet.has(ticker));
     if (relatedTickers.length === 0) continue;
@@ -828,12 +906,20 @@ macroSensitivities[ticker] = betas;
       });
       existingNewsByKey.set(newsKey, newsItemId);
     }
-    try {
-      await db.newsItemSymbol.createMany({
-        data: relatedTickers.map((ticker) => ({ newsItemId, ticker })),
-      });
-    } catch {
-      // Ignore duplicates
+    const newPairs = relatedTickers.filter(
+      (ticker) => !existingNewsSymbolPairs.has(`${newsItemId}:${ticker}`)
+    );
+    if (newPairs.length > 0) {
+      try {
+        await db.newsItemSymbol.createMany({
+          data: newPairs.map((ticker) => ({ newsItemId, ticker })),
+        });
+        for (const ticker of newPairs) {
+          existingNewsSymbolPairs.add(`${newsItemId}:${ticker}`);
+        }
+      } catch {
+        // Ignore duplicates
+      }
     }
     newsCount += 1;
   }

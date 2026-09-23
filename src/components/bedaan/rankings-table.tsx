@@ -79,7 +79,7 @@ interface ColumnDefinition {
   responsiveClass?: string;
 }
 
-const GRADES = ["All", "STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"];
+const GRADES = ["All", "STRONG_BULLISH", "BULLISH", "NEUTRAL", "NO_DATA", "BEARISH", "STRONG_BEARISH"];
 
 const TEXT_OPERATORS: Array<{ value: RankingFilterOperator; label: string }> = [
   { value: "contains", label: "Contains" },
@@ -317,8 +317,23 @@ function RankingCell({ column, row }: { column: ColumnDefinition; row: RankingRo
       return (
         <td className={`px-2 py-1.5 ${alignmentClass} ${responsiveClass}`}>
           {row.processingStatus && (
-            <Badge variant="outline" className="text-[8px]">
-              {row.processingStatus.replace("_", " ")}
+            <Badge
+              variant="outline"
+              className="text-[8px]"
+              style={
+                row.processingStatus === "COEFFICIENTS_TRAINED" ||
+                row.processingStatus === "UI_VERIFIED"
+                  ? { color: "#22c55e", borderColor: "#22c55e" }
+                  : row.processingStatus === "FAILED" || row.processingStatus === "INSUFFICIENT_DATA"
+                  ? { color: "#ef4444", borderColor: "#ef4444" }
+                  : { color: "#f59e0b", borderColor: "#f59e0b" }
+              }
+            >
+              {row.processingStatus === "COEFFICIENTS_TRAINED"
+                ? "Done"
+                : row.processingStatus === "UI_VERIFIED"
+                ? "Verified"
+                : row.processingStatus.replace("_", " ")}
             </Badge>
           )}
         </td>
@@ -349,7 +364,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   const [grade, setGrade] = useState("All");
   const [processingStatus, setProcessingStatus] = useState("All");
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(100);
+  const [pageSize] = useState(20);
   const [sort, setSort] = useState<RankingColumnKey>("overall");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [columnFilters, setColumnFilters] = useState<

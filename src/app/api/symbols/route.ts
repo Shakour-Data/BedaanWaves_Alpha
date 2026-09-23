@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
       processingStatus: s.processingStatus,
       batchId: s.batchId,
       generationId: s.generationId,
-      dataQuality: s.dataQuality,
+      dataQuality: s.dataQuality ?? "INSUFFICIENT",
     })),
   });
 }

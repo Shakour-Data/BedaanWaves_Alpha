@@ -1,13 +1,13 @@
 // GET /api/rankings — paginated, filtered, sorted NASDAQ rankings (latest day)
 import { NextRequest, NextResponse } from "next/server";
-import { fetchRankings, parseRankingColumnFilters } from "@/lib/scoring/queries";
+import { fetchRankings, parseRankingColumnFilters, RANKING_SORT_KEYS } from "@/lib/scoring/queries";
 import { getLivePrices } from "@/lib/live-prices";
 import { SEED_TICKERS_DEDUP } from "@/lib/scoring/seed/universe";
 
 const VALID_TICKERS = new Set(SEED_TICKERS_DEDUP.map((t) => t.ticker));
-const MAX_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 20;
 const VALID_GRADES = ["STRONG_BULLISH", "BULLISH", "NEUTRAL", "NO_DATA", "BEARISH", "STRONG_BEARISH"] as const;
-const VALID_SORTS = ["overall", "price", "priceChange", "marketCap", "coverage", "rank"] as const;
+const VALID_SORTS = [...RANKING_SORT_KEYS];
 const VALID_ORDERS = ["asc", "desc"] as const;
 
 export async function GET(req: NextRequest) {
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   // Validate pageSize
   const pageSize = (() => {
     const raw = sp.get("pageSize");
-    if (!raw) return 25;
+    if (!raw) return 20;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? Math.min(MAX_PAGE_SIZE, Math.floor(n)) : 400;
   })();
@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
 
   // Validate grade
   const grade = sp.get("grade") ?? undefined;
-  if (grade !== undefined && !VALID_GRADES.includes(grade as any)) {
+  if (grade !== undefined && grade !== "All" && !VALID_GRADES.includes(grade as any)) {
     return NextResponse.json({ error: "Invalid grade" }, { status: 400 });
   }
 

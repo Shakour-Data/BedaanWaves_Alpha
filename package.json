@@ -13,7 +13,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "test": "tsx --test tests/scoring/invariant.test.ts tests/scoring/ingestion.test.ts",
+    "test": "tsx --test tests/scoring/invariant.test.ts tests/scoring/ingestion.test.ts tests/scoring/sentiment.test.ts",
     "test:ml": "tsx --test tests/scoring/ml.test.ts",
     "test:python": "python -m unittest discover -s tests/python -v",
     "train": "python scripts/ml/train.py",

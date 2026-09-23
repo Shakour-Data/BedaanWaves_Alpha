@@ -50,6 +50,10 @@ const ARTIFACTS_DIR = join(
   "coefficient_store"
 );
 
+// Cache loaded coefficient bundles per ticker (avoids repeated disk reads
+// during the day-by-day scoring loop in orchestrator.ts).
+const coefficientCache = new Map<string, PythonCoefficientBundle | null>();
+
 const LEVELS: Array<"dimensions" | "sub_dimensions" | "aspects" | "sub_aspects"> = [
   "dimensions",
   "sub_dimensions",
@@ -322,9 +326,13 @@ export function loadCoefficients(
   ticker: string,
   artifactsDir: string = ARTIFACTS_DIR
 ): PythonCoefficientBundle | null {
-  const tickerDir = join(artifactsDir, ticker);
-  if (!existsSync(tickerDir)) return null;
+  // Use cache keyed by ticker + directory to avoid repeated disk reads
+  const cacheKey = `${artifactsDir}/${ticker}`;
+  if (coefficientCache.has(cacheKey)) {
+    return coefficientCache.get(cacheKey) ?? null;
+  }
 
+  const tickerDir = join(artifactsDir, ticker);
   const loaded: Record<string, Record<string, number>> = {};
 
   for (const level of LEVELS) {
@@ -341,7 +349,10 @@ export function loadCoefficients(
     }
   }
 
-  if (Object.keys(loaded).length === 0) return null;
+  if (Object.keys(loaded).length === 0) {
+    coefficientCache.set(cacheKey, null);
+    return null;
+  }
   const metaPath = join(tickerDir, "meta.json");
   let meta: Record<string, unknown> | null = null;
   if (existsSync(metaPath)) {
@@ -352,7 +363,7 @@ export function loadCoefficients(
     }
   }
 
-  return {
+  const bundle = {
     ticker,
     dimensions: loaded.dimensions ?? uniformWeights(DIMENSION_KEYS as unknown as string[]),
     sub_dimensions: loaded.sub_dimensions ?? uniformWeights(getSubDimKeys()),
@@ -370,6 +381,8 @@ export function loadCoefficients(
     driftStatus: "OK" as const,
     driftPsi: (meta?.driftPsi as number | null) ?? null,
   };
+  coefficientCache.set(cacheKey, bundle);
+  return bundle;
 }
 
 // ─── OOS evaluation helpers (spec §4.5) ─────────────────────────────────

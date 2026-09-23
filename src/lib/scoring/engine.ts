@@ -110,10 +110,19 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
   const tickers = Object.keys(assetMetrics);
   const n = tickers.length;
 
-    // Step 1 — compute sub-aspect scores per db_field
-    // For macro dimension metrics (market-wide, same value for all tickers),
-    // use time-series scoring then modulate by per-ticker macro sensitivity (beta)
-    // so that different tickers get differentiated macro dimension scores.
+   // Step 1 — compute sub-aspect scores per db_field
+   // For macro dimension metrics (market-wide, same value for all tickers),
+   // use time-series scoring then modulate by per-ticker macro sensitivity (beta)
+   // so that different tickers get differentiated macro dimension scores.
+   // For sentiment-dimension sub-aspects, the raw values are ALREADY on a
+   // 0-100 scale (news_sentiment_avg: 25-75 from severity-weighted sentiment,
+   // news_volume: 0-100 from sqrt-scaled article count, social_sentiment:
+   // 0-100 derived from buzz × deviation). Cross-sectional ranking would
+   // destroy the absolute sentiment meaning (e.g., all bullish news → all
+   // tickers score 50 because they're tied). Instead, use the normalized
+   // value directly as the L4 score, with null → 50.0 neutral.
+const SENTIMENT_DIM = "sentiment";
+    const AI_DIM = "ai";
     const subAspectScoreMap: Record<string, Record<string, number>> = {};
     for (const ticker of tickers) subAspectScoreMap[ticker] = {};
     for (const spec of METRIC_UNIVERSE) {
@@ -129,6 +138,32 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
           const beta = clamp(input.macroSensitivities?.[tickers[i]]?.[spec.dbField] ?? 0, -1, 1);
           const adjusted = 50 + (baseScore - 50) * (1 + beta * 0.6);
           subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(adjusted, 0, 100);
+        }
+      } else if (spec.dim === SENTIMENT_DIM) {
+        // Sentiment sub-aspects are already on a 0-100 scale from
+        // computeNewsSentimentForDay. Use the value directly — do NOT
+        // cross-sectionally rank, which would obliterate absolute sentiment.
+        for (let i = 0; i < n; i++) {
+          const raw = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
+          if (raw === null || Number.isNaN(raw as number)) {
+            subAspectScoreMap[tickers[i]][spec.subAspect] = 50.0;
+          } else {
+            subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(raw, 0, 100);
+          }
+        }
+      } else if (spec.dim === AI_DIM) {
+        // AI sub-aspects are already on a 0-100 scale from real-data.ts
+        // (real market derivations) and/or the Python ML inference module
+        // (ensemble predictions). Use the value directly — do NOT
+        // cross-sectionally rank, which would compress narrow-range
+        // AI signals toward 50.
+        for (let i = 0; i < n; i++) {
+          const raw = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
+          if (raw === null || Number.isNaN(raw as number)) {
+            subAspectScoreMap[tickers[i]][spec.subAspect] = 50.0;
+          } else {
+            subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(raw, 0, 100);
+          }
         }
       } else {
         // Cross-sectional scoring for per-ticker metrics (fundamental, technical, etc.)

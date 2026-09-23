@@ -236,12 +236,29 @@ src/lib/scoring/seed/live-prices.json
 REPORT-final.md
 /check_macro.mjs
 /check-progress.ts
+/check-current.ts
+/check-sentiment.cjs
+/check-sentiment2.cjs
+/check-tables2.ts
+/debug-prisma-date.ts
+/full-fix.ts
+/full-fix2.ts
+/normalize-and-test.ts
+/temp_debug.ts
+/temp_verify.ts
+/verify-rankings.ts
 /scripts/fix-data-quality.ts
 /scripts/verify-all-fixes.ts
 /scripts/backfill-data-quality.ts
 
 # Kilo tooling
 .kilo/
+
+# Runtime logs
+logs/
+
+# Ingestion checkpoint (runtime state)
+src/lib/scoring/seed/.ingest-checkpoint.json
 
 # ML model artifacts (trained binaries, do not track)
 artifacts/
@@ -257,3 +274,7 @@ scripts/ml/__pycache__/
 
 # Python test suite (one-off validation)
 tests/python/
+
+# Python refresh scripts (one-off data fetchers)
+/scripts/fetch_live_prices.py
+/scripts/refresh_ohlcv.py

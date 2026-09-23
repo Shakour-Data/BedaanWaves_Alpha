@@ -264,7 +264,7 @@ type RankingRecord = {
   rank?: number;
 };
 
-const RANKING_SORT_KEYS: RankingColumnKey[] = [
+export const RANKING_SORT_KEYS: RankingColumnKey[] = [
   "rank",
   "ticker",
   "overall",
@@ -380,8 +380,13 @@ function compareRankingRecords(
 
   const av = getSortValue(a, sortField);
   const bv = getSortValue(b, sortField);
-  if (av === null || av === undefined) return 1;
-  if (bv === null || bv === undefined) return -1;
+  if (av === null || av === undefined) {
+    if (bv === null || bv === undefined) return 0;
+    return order === "asc" ? 1 : -1;
+  }
+  if (bv === null || bv === undefined) {
+    return order === "asc" ? -1 : 1;
+  }
 
   let comparison: number;
   if (typeof av === "string" || typeof bv === "string") {
@@ -395,7 +400,7 @@ function compareRankingRecords(
 
 export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   const page = Math.max(1, q.page ?? 1);
-  const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 25));
+  const pageSize = Math.min(20, Math.max(1, q.pageSize ?? 20));
   
   // Use all generations if not specified, so symbols from every ingested
   // batch (e.g. BATCH-1) appear in rankings, not just the latest one.
@@ -410,6 +415,7 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   const all = await db.scoreSnapshot.findMany({
     where: generationId ? { generationId } : undefined,
     select: {
+      id: true,
       ticker: true,
       overall: true,
       capturedAt: true,
@@ -453,17 +459,9 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   // Fetch remaining fields (dimensionScores, signals, etc.) only for the
   // latest snapshots we actually need, batched to avoid engine overload.
   // This two-step approach fetches ~590 records instead of 32K+.
-  const tickerCaptured = latestSnapshots.map((r) => ({
-    ticker: r.ticker,
-    capturedAt: r.capturedAt,
-  }));
+  const snapshotIds = latestSnapshots.map((r) => r.id);
   const detailRows = await db.scoreSnapshot.findMany({
-    where: {
-      OR: tickerCaptured.map((tc) => ({
-        ticker: tc.ticker,
-        capturedAt: tc.capturedAt,
-      })),
-    },
+    where: { id: { in: snapshotIds } },
     select: {
       ticker: true,
       overall: true,
@@ -517,7 +515,7 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
       processingStatus: row.symbol.processingStatus,
       batchId: row.symbol.batchId,
       generationId: row.symbol.generationId,
-      dataQuality: row.symbol.dataQuality,
+      dataQuality: row.symbol.dataQuality ?? "INSUFFICIENT",
     });
   }
 
@@ -578,6 +576,13 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     nonRankFilters.every((filter) => matchesColumnFilter(record, filter)),
   );
 
+  const rankFilters = columnFilters.filter((filter) => filter.key === "rank");
+  if (rankFilters.length > 0) {
+    filtered = filtered.filter((record) =>
+      rankFilters.every((filter) => matchesColumnFilter(record, filter)),
+    );
+  }
+
   const requestedSort = q.sort;
   const sortField = RANKING_SORT_KEYS.includes(requestedSort as RankingColumnKey)
     ? (requestedSort as RankingColumnKey)
@@ -588,12 +593,6 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     .sort((a, b) => compareRankingRecords(a, b, sortField, order));
 
   filtered = filtered.map((record, index) => ({ ...record, rank: index + 1 }));
-  const rankFilters = columnFilters.filter((filter) => filter.key === "rank");
-  if (rankFilters.length > 0) {
-    filtered = filtered.filter((record) =>
-      rankFilters.every((filter) => matchesColumnFilter(record, filter)),
-    );
-  }
 
   const total = filtered.length;
   const start = (page - 1) * pageSize;
