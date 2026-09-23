@@ -84,6 +84,7 @@ test_shot.png
 /prisma/db/
 
 # Temporary JSON data files
+src/lib/scoring/seed/real-market-data.json
 src/lib/scoring/seed/real-market-data.json.tmp
 
 # Archives
