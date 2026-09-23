@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowDown,
@@ -371,6 +371,29 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
     Partial<Record<RankingColumnKey, RankingColumnFilter>>
   >({});
   const [openPopover, setOpenPopover] = useState<RankingColumnKey | null>(null);
+  const [symbolOpen, setSymbolOpen] = useState(false);
+  const symbolRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (symbolRef.current && !symbolRef.current.contains(e.target as Node)) setSymbolOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const symbolQ = useQuery({
+    queryKey: ["symbol-search-autocomplete", search],
+    queryFn: async () => {
+      if (!search.trim()) return { symbols: [] as { ticker: string; name: string; sector: string; isEtf: boolean }[] };
+      const r = await fetch(`/api/symbols?q=${encodeURIComponent(search)}&limit=10`);
+      return r.json() as Promise<{ symbols: { ticker: string; name: string; sector: string; isEtf: boolean }[] }>;
+    },
+    enabled: search.trim().length > 0,
+  });
+
+  const symbolHits = symbolQ.data?.symbols ?? [];
+
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<RankingColumnKey[]>(() => {
     if (typeof window === "undefined") return ALL_COLUMN_KEYS;
     try {
@@ -461,17 +484,49 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="flex flex-wrap items-center gap-1.5">
-        <div className="relative flex-1 min-w-[140px]">
+        <div ref={symbolRef} className="relative flex-1 min-w-[140px]">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
               setPage(1);
+              setSymbolOpen(true);
             }}
+            onFocus={() => setSymbolOpen(true)}
             placeholder="Search ticker / name / sector…"
             className="h-7 pl-7 text-xs"
           />
+          {symbolOpen && search.trim().length > 0 && (
+            <div className="absolute left-0 right-0 top-8 z-50 max-h-60 overflow-y-auto rounded border border-border bg-popover shadow-lg">
+              {symbolHits.length === 0 ? (
+                <div className="px-3 py-2 text-[10px] text-muted-foreground">
+                  No matches in NASDAQ universe.
+                </div>
+              ) : (
+                symbolHits.map((h) => (
+                  <button
+                    key={h.ticker}
+                    className="flex w-full items-center justify-between gap-2 border-b border-border/50 px-2 py-1.5 text-left text-[10px] last:border-0 hover:bg-muted/60"
+                    onClick={() => {
+                      setSearch(h.ticker);
+                      onSelect(h.ticker);
+                      setSymbolOpen(false);
+                    }}
+                  >
+                    <div>
+                      <span className="font-bold">{h.ticker}</span>{" "}
+                      <span className="text-muted-foreground">{h.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[8px] text-muted-foreground shrink-0">
+                      {h.isEtf && <span className="rounded px-0.5 py-0 bg-muted">ETF</span>}
+                      <span>{h.sector}</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
         </div>
         <Select value={sector} onValueChange={(v) => { setSector(v); setPage(1); }}>
           <SelectTrigger className="h-7 w-[120px] text-[10px]">

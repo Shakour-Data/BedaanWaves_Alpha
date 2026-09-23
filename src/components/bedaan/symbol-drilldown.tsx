@@ -1,7 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 import {
   Tabs,
   TabsContent,
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Activity,
@@ -19,6 +20,7 @@ import {
   Gauge,
   Layers,
   LineChart,
+  Search,
   Users,
   X,
 } from "lucide-react";
@@ -83,6 +85,29 @@ interface SymbolDetail {
 export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChange }: Props) {
   const [tab, setTab] = useState("history");
   const [traceOpen, setTraceOpen] = useState(false);
+  const [compareInput, setCompareInput] = useState("");
+  const [compareOpen, setCompareOpen] = useState(false);
+  const compareRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (compareRef.current && !compareRef.current.contains(e.target as Node)) setCompareOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const searchQ = useQuery({
+    queryKey: ["compare-symbols", compareInput],
+    queryFn: async () => {
+      const r = await fetch(`/api/symbols?q=${encodeURIComponent(compareInput)}&limit=10`);
+      return r.json() as Promise<{ symbols: { ticker: string; name: string; sector: string; isEtf: boolean }[] }>;
+    },
+    enabled: compareInput.length > 0 && !compareTicker,
+  });
+
+  const searchHits = searchQ.data?.symbols ?? [];
+  const isSelf = (t: string) => t === ticker;
 
   const q = useQuery({
     queryKey: ["symbol-detail", ticker],
@@ -314,14 +339,69 @@ const detail: SymbolDetail | undefined = q.data;
                 <span className="font-semibold">Spec §3.1 / §11.3:</span> Per-symbol ML-learned weights at all 4 levels (L1/L2/L3/L4). Compare against another ticker to confirm divergence — AAPL ≠ NVDA at the same timestamp.
               </div>
               {!compareTicker && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-2 h-7 text-[10px]"
-                  onClick={() => onCompareChange?.("NVDA")}
-                >
-                  Compare against NVDA
-                </Button>
+                <div ref={compareRef} className="mt-2 flex items-center gap-1 relative">
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={compareInput}
+                      onChange={(e) => {
+                        setCompareInput(e.target.value);
+                        setCompareOpen(true);
+                      }}
+                      onFocus={() => setCompareOpen(true)}
+                      placeholder="Compare ticker (e.g. NVDA)"
+                      className="h-7 w-[180px] pl-7 text-[10px]"
+                      maxLength={5}
+                      autoComplete="off"
+                    />
+                    {compareOpen && compareInput.length > 0 && (
+                      <div className="absolute left-0 right-0 top-8 z-50 max-h-60 overflow-y-auto rounded border border-border bg-popover shadow-lg">
+                        {searchHits.length === 0 ? (
+                          <div className="px-3 py-2 text-[10px] text-muted-foreground">
+                            No matches in NASDAQ universe.
+                          </div>
+                        ) : (
+                          searchHits.map((h) => (
+                            <button
+                              key={h.ticker}
+                              disabled={isSelf(h.ticker)}
+                              onClick={() => {
+                                onCompareChange?.(h.ticker);
+                                setCompareInput("");
+                                setCompareOpen(false);
+                              }}
+                              className={`flex w-full items-center justify-between gap-2 border-b border-border/50 px-2 py-1.5 text-left text-[10px] last:border-0 hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed`}
+                            >
+                              <div>
+                                <span className="font-bold">{h.ticker}</span>{" "}
+                                <span className="text-muted-foreground">{h.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1 text-[8px] text-muted-foreground shrink-0">
+                                {h.isEtf && <span className="rounded px-0.5 py-0 bg-muted">ETF</span>}
+                                <span>{h.sector}</span>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 text-[10px]"
+                    disabled={!compareInput.trim() || isSelf(compareInput.trim().toUpperCase())}
+                    onClick={() => {
+                      if (compareInput.trim()) {
+                        onCompareChange?.(compareInput.trim().toUpperCase());
+                        setCompareInput("");
+                        setCompareOpen(false);
+                      }
+                    }}
+                  >
+                    Compare
+                  </Button>
+                </div>
               )}
               {compareTicker && (
                 <div className="mt-2 flex items-center gap-2 text-[10px]">
