@@ -1038,6 +1038,12 @@ export async function fetchMarketStatus() {
   const coldStart = await db.scoreSnapshot.count({
     where: { capturedAt: latest, coefficientVersion: "uniform-cold-start" },
   });
+  // Count fully processed symbols: those with COEFFICIENTS_TRAINED or UI_VERIFIED status
+  const fullyProcessed = await db.symbol.count({
+    where: {
+      processingStatus: { in: ["COEFFICIENTS_TRAINED", "UI_VERIFIED"] },
+    },
+  });
   // universe distribution
   const sectors = await db.symbol.groupBy({ by: ["sector"], _count: true });
 
@@ -1080,6 +1086,7 @@ export async function fetchMarketStatus() {
     totalNews,
     totalTrainingRuns,
     coldStartSymbols: coldStart,
+    fullyProcessedSymbols: fullyProcessed,
     grades: grades.map((g) => ({ grade: g.grade, count: g._count })),
     sectors: sectors.map((s) => ({ sector: s.sector, count: s._count })),
     validatedRecords: totalSnapshots,

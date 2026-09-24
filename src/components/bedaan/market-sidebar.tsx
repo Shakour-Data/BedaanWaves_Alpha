@@ -15,6 +15,7 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
     queryKey: ["market-status"],
     queryFn: async () => {
       const r = await fetch("/api/market-status");
+      if (!r.ok) throw new Error(`market-status ${r.status}`);
       return r.json();
     },
     refetchInterval: 30_000,
@@ -24,6 +25,7 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
     queryKey: ["ingestion-batches"],
     queryFn: async () => {
       const r = await fetch("/api/ingestion/batches");
+      if (!r.ok) throw new Error(`batches ${r.status}`);
       return r.json();
     },
     refetchInterval: 30_000,
@@ -36,6 +38,7 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
     queryKey: ["top-symbols"],
     queryFn: async () => {
       const r = await fetch("/api/symbols?limit=50");
+      if (!r.ok) throw new Error(`symbols ${r.status}`);
       const j = await r.json();
       // Anti-mock: separate real-data symbols from no-data symbols.
       // Show both, with explicit status for missing-data symbols.
@@ -55,7 +58,7 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
   const latestBatch = batches[0];
 
   // Count fully processed symbols (COEFFICIENTS_TRAINED or UI_VERIFIED)
-  const fullyProcessed = status?.grades?.reduce((sum: number, g: { count: number }) => sum + g.count, 0) ?? 0;
+  const fullyProcessed = status?.fullyProcessedSymbols ?? 0;
   const totalSymbols = status?.totalSymbols ?? 0;
   const registeredButNotProcessed = totalSymbols - fullyProcessed;
 

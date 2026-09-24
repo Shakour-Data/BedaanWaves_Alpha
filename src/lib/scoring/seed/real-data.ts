@@ -41,13 +41,27 @@ interface RealInfo {
   operatingMargins?: number;
   revenueGrowth?: number;
   earningsGrowth?: number;
+  freeCashFlowGrowth?: number;
   currentRatio?: number;
   quickRatio?: number;
   debtToEquity?: number;
+  interestCoverage?: number;
+  totalDebtToEbitda?: number;
   dividendYield?: number;
+  freeCashFlowYield?: number;
+  operatingCashFlowRatio?: number;
   volume?: number;
   averageVolume?: number;
   averageDailyVolume10Day?: number;
+  // Additional computed metrics from financial statements
+  priceToCashFlow?: number;
+  ebitdaMargin?: number;
+  operatingLeverage?: number;
+  cashRatio?: number;
+  assetTurnover?: number;
+  inventoryTurnover?: number;
+  receivablesTurnover?: number;
+  debtToAssets?: number;
 }
 interface RealTickerData {
   ohlcv: RealBar[];
@@ -1068,7 +1082,7 @@ export class RealTickerWalk {
     m["sortino_ratio"] = sortino(dailyReturnsPct, riskFreeRate ?? 0);
     m["beta"] = beta(dailyReturnsPct, marketReturns.slice(-Math.min(dailyReturnsPct.length, marketReturns.length))) ?? this.beta;
 
-    // ── Fundamental indicators (real, from yfinance info only) ──
+    // ── Fundamental indicators (real, from yfinance info + financial statements) ──
     // Per spec §1.2: NO synthetic/fabricated fundamentals. If yfinance info
     // is unavailable, all fundamental metrics remain null (→ 50.0 neutral at L4).
     const info = this.info;
@@ -1079,7 +1093,7 @@ export class RealTickerWalk {
     m["ev_ebitda"] = info?.enterpriseToEbitda ?? null;
     m["peg_ratio"] = info?.pegRatio ?? null;
     m["price_to_sales"] = info?.priceToSalesTrailing12Months ?? null;
-    m["price_to_cash_flow"] = null;
+    m["price_to_cash_flow"] = info?.priceToCashFlow ?? null;
     m["payout_ratio"] = info?.payoutRatio !== undefined ? info.payoutRatio * 100 : null;
     m["roe"] = info?.returnOnEquity !== undefined ? info.returnOnEquity * 100 : null;
     m["roa"] = info?.returnOnAssets !== undefined ? info.returnOnAssets * 100 : null;
@@ -1088,26 +1102,26 @@ export class RealTickerWalk {
     m["gross_margin"] = info?.grossMargins !== undefined ? info.grossMargins * 100 : null;
     m["operating_margin"] = info?.operatingMargins !== undefined ? info.operatingMargins * 100 : null;
     m["net_margin"] = info?.profitMargins !== undefined ? info.profitMargins * 100 : null;
-    m["ebitda_margin"] = null;
-    m["operating_leverage"] = null;
+    m["ebitda_margin"] = info?.ebitdaMargin !== undefined ? info.ebitdaMargin : null;
+    m["operating_leverage"] = info?.operatingLeverage !== undefined ? info.operatingLeverage : null;
     m["revenue_growth"] = info?.revenueGrowth !== undefined ? info.revenueGrowth * 100 : null;
     m["eps_growth"] = info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null;
     m["earnings_growth"] = info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null;
-    m["free_cash_flow_growth"] = null;
+    m["free_cash_flow_growth"] = info?.freeCashFlowGrowth !== undefined ? info.freeCashFlowGrowth * 100 : null;
     m["current_ratio"] = info?.currentRatio ?? null;
     m["quick_ratio"] = info?.quickRatio ?? null;
-    m["cash_ratio"] = null;
-    m["asset_turnover"] = null;
-    m["inventory_turnover"] = null;
-    m["receivables_turnover"] = null;
+    m["cash_ratio"] = info?.cashRatio !== undefined ? info.cashRatio : null;
+    m["asset_turnover"] = info?.assetTurnover !== undefined ? info.assetTurnover : null;
+    m["inventory_turnover"] = info?.inventoryTurnover !== undefined ? info.inventoryTurnover : null;
+    m["receivables_turnover"] = info?.receivablesTurnover !== undefined ? info.receivablesTurnover : null;
     m["debt_to_equity"] = info?.debtToEquity !== undefined ? info.debtToEquity : null;
-    m["debt_to_assets"] = null;
-    m["interest_coverage"] = null;
-    m["debt_to_ebitda"] = null;
+    m["debt_to_assets"] = info?.debtToAssets !== undefined ? info.debtToAssets : null;
+    m["interest_coverage"] = info?.interestCoverage !== undefined ? info.interestCoverage : null;
+    m["debt_to_ebitda"] = info?.totalDebtToEbitda !== undefined ? info.totalDebtToEbitda : null;
     m["dividend_yield"] = info?.dividendYield !== undefined ? info.dividendYield * 100 : null;
     m["dividend_growth_rate"] = null;
-    m["free_cash_flow_yield"] = null;
-    m["operating_cash_flow_ratio"] = null;
+    m["free_cash_flow_yield"] = info?.freeCashFlowYield !== undefined ? info.freeCashFlowYield : null;
+    m["operating_cash_flow_ratio"] = info?.operatingCashFlowRatio !== undefined ? info.operatingCashFlowRatio : null;
     m["capex_ratio"] = null;
     m["cash_conversion_ratio"] = null;
     m["roe_stability"] = null;
@@ -1366,24 +1380,42 @@ export function loadRealUniverse(): LoadedUniverse | null {
   } catch {
     return null;
   }
-  // Determine the common trading days across all tickers (intersection of dates)
-  const allDateSets: Set<string>[] = [];
-  for (const t of Object.keys(data.per_ticker)) {
-    const dates = new Set(data.per_ticker[t].ohlcv.map((b) => b.date));
-    allDateSets.push(dates);
+
+  // Filter tickers with insufficient data (< 50 OHLCV bars) to ensure
+  // stable technical indicator computation and avoid polluting the
+  // trading-day set with sparse single-bar tickers (e.g. EA with 1 bar).
+  const MIN_BARS = 50;
+  const validTickers = Object.entries(data.per_ticker)
+    .filter(([_, td]) => td.ohlcv.length >= MIN_BARS)
+    .map(([ticker, td]) => [ticker, td] as const);
+
+  if (validTickers.length === 0) return null;
+
+  // Compute intersection of dates across all valid tickers so that
+  // every scoring day has data for all tickers (no gaps in priceHistory).
+  const dateSets: Set<string>[] = [];
+  for (const [_, td] of validTickers) {
+    dateSets.push(new Set(td.ohlcv.map((b) => b.date)));
   }
-  if (allDateSets.length === 0) return null;
-  // Use the union (we want max coverage; missing tickers handled as null)
-  const union = new Set<string>();
-  for (const s of allDateSets) for (const d of s) union.add(d);
-  const tradingDays = Array.from(union).sort();
+  // Intersection: start with all dates from the first ticker, then filter
+  const intersection = new Set(dateSets[0]);
+  for (let i = 1; i < dateSets.length; i++) {
+    for (const d of Array.from(intersection)) {
+      if (!dateSets[i].has(d)) {
+        intersection.delete(d);
+      }
+    }
+  }
+  if (intersection.size === 0) return null;
+
+  const tradingDays = Array.from(intersection).sort();
   // Limit to last 90 days for scoring (history can be longer for indicator warmup)
   const scoringDays = tradingDays.slice(-90);
 
   // Build walks
   const walks = new Map<string, RealTickerWalk>();
   const tickers: string[] = [];
-  for (const [ticker, td] of Object.entries(data.per_ticker)) {
+  for (const [ticker, td] of validTickers) {
     const seedTicker = SEED_TICKERS_DEDUP.find((s) => s.ticker === ticker);
     const walk = new RealTickerWalk(ticker, td, seedTicker);
     walks.set(ticker, walk);

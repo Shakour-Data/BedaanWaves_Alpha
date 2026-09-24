@@ -29,15 +29,30 @@ export interface LivePricesData {
 let cached: LivePricesData | null = null;
 let cachedMtime = 0;
 
+/**
+ * yfinance sometimes emits raw `NaN` / `Infinity` values which are NOT valid JSON.
+ * `JSON.parse` throws on them, so we sanitize the raw text before parsing.
+ * This keeps the app resilient even if an older file with bad values is present.
+ */
+function sanitizeJsonText(text: string): string {
+  return text
+    .replace(/:\s*NaN\b/g, ": null")
+    .replace(/:\s*Infinity\b/g, ": null")
+    .replace(/:\s*-Infinity\b/g, ": null");
+}
+
 function loadLivePrices(): LivePricesData | null {
   try {
     const st = fs.statSync(LIVE_FILE);
     if (cached && cachedMtime === st.mtimeMs) return cached;
-    const data = JSON.parse(fs.readFileSync(LIVE_FILE, "utf-8")) as LivePricesData;
+    const raw = fs.readFileSync(LIVE_FILE, "utf-8");
+    const data = JSON.parse(sanitizeJsonText(raw)) as LivePricesData;
     cached = data;
     cachedMtime = st.mtimeMs;
     return data;
-  } catch {
+  } catch (e) {
+    // File missing, unreadable, or malformed — degrade gracefully.
+    console.error("[live-prices] load failed:", e instanceof Error ? e.message : e);
     return null;
   }
 }

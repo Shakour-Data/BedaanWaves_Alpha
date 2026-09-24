@@ -279,3 +279,10 @@ tests/python/
 # Python refresh scripts (one-off data fetchers)
 /scripts/fetch_live_prices.py
 /scripts/refresh_ohlcv.py
+
+# One-off test/debug scripts
+/test-db.ts
+/test-seed.ts
+/tmp_*.py
+/tmp_*.json
+tmp_baseline_store/

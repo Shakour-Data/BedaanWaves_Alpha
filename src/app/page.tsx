@@ -29,13 +29,26 @@ export default function Home() {
   const [seedStatus, setSeedStatus] = useState<{symbols: number; snapshots: number; status: string} | null>(null);
   useEffect(() => {
     fetch("/api/seed")
-      .then((r) => r.json())
+      .then((r) => r.json().catch(() => ({ symbols: 0, snapshots: 0, ok: false })))
       .then((data) => setSeedStatus({
         symbols: data.symbols ?? 0,
         snapshots: data.snapshots ?? 0,
         status: data.ok ? "ready" : "pending",
       }))
       .catch(() => null);
+  }, []);
+
+  // Suppress unhandled promise rejections (from aborted queries during Fast Refresh,
+  // Chrome extensions, etc.) to keep the dev console clean.
+  useEffect(() => {
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      event.preventDefault();
+      if (process.env.NODE_ENV === "development") {
+        console.debug("[unhandledrejection suppressed]", event.reason);
+      }
+    };
+    window.addEventListener("unhandledrejection", onUnhandled);
+    return () => window.removeEventListener("unhandledrejection", onUnhandled);
   }, []);
 
   // When a symbol is selected, auto-switch to chart view (deferred to avoid set-state-in-effect)

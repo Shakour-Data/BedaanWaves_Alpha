@@ -33,6 +33,7 @@ export function Header({ onSymbolSelect }: Props) {
     queryKey: ["symbol-search", q],
     queryFn: async () => {
       const r = await fetch(`/api/symbols?q=${encodeURIComponent(q)}&limit=10`);
+      if (!r.ok) throw new Error(`symbols ${r.status}`);
       const j = await r.json();
       return j.symbols as SymbolHit[];
     },

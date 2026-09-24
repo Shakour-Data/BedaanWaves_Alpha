@@ -54,6 +54,7 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
     queryKey: ["watchlists"],
     queryFn: async () => {
       const r = await fetch("/api/watchlists");
+      if (!r.ok) throw new Error(`watchlists ${r.status}`);
       const j = await r.json();
       return j.watchlists as Watchlist[];
     },
@@ -63,6 +64,7 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
     queryKey: ["alerts"],
     queryFn: async () => {
       const r = await fetch("/api/alerts");
+      if (!r.ok) throw new Error(`alerts ${r.status}`);
       const j = await r.json();
       return j.alerts as Alert[];
     },
@@ -75,6 +77,7 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      if (!r.ok) throw new Error(`create list ${r.status}`);
       return r.json();
     },
     onSuccess: () => {
@@ -90,6 +93,7 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker }),
       });
+      if (!r.ok) throw new Error(`add ticker ${r.status}`);
       return r.json();
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlists"] }),
@@ -97,16 +101,18 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
 
   const removeTicker = useMutation({
     mutationFn: async ({ listId, ticker }: { listId: string; ticker: string }) => {
-      await fetch(`/api/watchlists/${listId}/entries?ticker=${ticker}`, {
+      const r = await fetch(`/api/watchlists/${listId}/entries?ticker=${ticker}`, {
         method: "DELETE",
       });
+      if (!r.ok) throw new Error(`remove ticker ${r.status}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlists"] }),
   });
 
   const deleteList = useMutation({
     mutationFn: async (id: string) => {
-      await fetch(`/api/watchlists/${id}`, { method: "DELETE" });
+      const r = await fetch(`/api/watchlists/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error(`delete list ${r.status}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlists"] }),
   });
@@ -123,6 +129,7 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (!r.ok) throw new Error(`create alert ${r.status}`);
       return r.json();
     },
     onSuccess: () => {
@@ -134,7 +141,8 @@ export function WatchlistAlertsPanel({ onSymbolClick }: Props) {
 
   const deleteAlert = useMutation({
     mutationFn: async (id: string) => {
-      await fetch(`/api/alerts/${id}`, { method: "DELETE" });
+      const r = await fetch(`/api/alerts/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error(`delete alert ${r.status}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
   });

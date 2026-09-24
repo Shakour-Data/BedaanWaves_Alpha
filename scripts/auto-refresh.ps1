@@ -20,7 +20,6 @@ param(
     [switch]$Force
 )
 
-$ErrorActionPreference = "Stop"
 Set-Location "$PSScriptRoot/.."
 
 $LOG = "logs/bedaan-refresh.log"
@@ -58,7 +57,10 @@ $needsFull = $Force
 if (-not $needsFull) {
     $checkOutput = npx tsx scripts/check_db.ts 2>$null
     $snapshotCount = 0
-    if ($checkOutput -match 'Snapshots:\s*(\d+)') {
+    # Join array output into single string for regex matching (PowerShell captures
+    # multi-line output as an array, which breaks -match/$matches)
+    $checkText = @($checkOutput) -join "`n"
+    if ($checkText -match 'Snapshots:\s*(\d+)') {
         $snapshotCount = [int]$matches[1]
     }
     if ($snapshotCount -eq 0) { $needsFull = $true }
@@ -75,10 +77,13 @@ if ($needsFull) {
 }
 $orchestratorFailed = $false
 try {
+    $ErrorActionPreference = "Stop"
     npx tsx scripts/run-orchestrator.ts $orchArgs 2>&1 | Tee-Object -FilePath $LOG -Append
+    $ErrorActionPreference = "Continue"
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "[$ts] Orchestrator completed" | Tee-Object -FilePath $LOG -Append
 } catch {
+    $ErrorActionPreference = "Continue"
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "[$timestamp] ERROR: orchestrator failed: $_" | Tee-Object -FilePath $LOG -Append
     $orchestratorFailed = $true

@@ -28,6 +28,7 @@ export function MarketTicker({ onSymbolClick }: Props) {
     queryKey: ["ticker-tape"],
     queryFn: async () => {
       const r = await fetch("/api/ticker?limit=100");
+      if (!r.ok) throw new Error(`ticker ${r.status}`);
       const j = await r.json();
       return j.items as TickerItem[];
     },

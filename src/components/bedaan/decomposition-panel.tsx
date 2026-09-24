@@ -29,6 +29,7 @@ export function DecompositionPanel({ ticker }: Props) {
     queryKey: ["decomposition", ticker],
     queryFn: async () => {
       const r = await fetch(`/api/decomposition/${ticker}`);
+      if (!r.ok) throw new Error(`decomposition ${r.status}`);
       return r.json();
     },
     enabled: !!ticker,

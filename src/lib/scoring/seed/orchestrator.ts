@@ -317,9 +317,16 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const pendingLabels: Record<
     string,
     Array<{
-      dayIdx: number;
+      priceIdx: number;
       subAspectScores: Record<string, number>;
       dimensionScores: Record<string, number>;
+      subDimensionScores: Record<string, number>;
+      aspectScores: Record<string, number>;
+      capturedAt: string;
+      volatilityZ: number;
+      volume: number;
+      priceChange: number;
+      marketCap: number;
       priceAtLabel: number;
     }>
   > = {};
@@ -507,6 +514,8 @@ macroSensitivities[ticker] = betas;
 
       const subAspectScores = JSON.parse(JSON.stringify(s.subAspectScores));
       const dimensionScores = JSON.parse(JSON.stringify(s.dimensionScores));
+      const subDimensionScores = JSON.parse(JSON.stringify(s.subDimensionScores));
+      const aspectScores = JSON.parse(JSON.stringify(s.aspectScores));
 
       const row: SnapshotRow = {
         ticker: s.ticker,
@@ -533,38 +542,55 @@ macroSensitivities[ticker] = betas;
       };
       allSnapshots.push(row);
 
-      // Accumulate price history for forward-return labels
-      if (!priceHistory[s.ticker]) priceHistory[s.ticker] = [];
-      priceHistory[s.ticker].push(s.price);
-      if (!pendingLabels[s.ticker]) pendingLabels[s.ticker] = [];
-      pendingLabels[s.ticker].push({
-        dayIdx: i,
-        subAspectScores,
-        dimensionScores,
-        priceAtLabel: s.price,
-      });
+       // Accumulate price history for forward-return labels
+       if (!priceHistory[s.ticker]) priceHistory[s.ticker] = [];
+       const priceIdx = priceHistory[s.ticker].length;
+       priceHistory[s.ticker].push(s.price);
+       if (!pendingLabels[s.ticker]) pendingLabels[s.ticker] = [];
+        pendingLabels[s.ticker].push({
+          priceIdx,
+          subAspectScores,
+          dimensionScores,
+          subDimensionScores,
+          aspectScores,
+          capturedAt,
+          volatilityZ: day.assetMetrics[s.ticker]?.volatility_z ?? 0,
+          volume: day.prices[s.ticker]?.volume ?? 0,
+          priceChange: day.prices[s.ticker]?.priceChange ?? 0,
+          marketCap: universe.walks.get(s.ticker)?.marketCap ?? 0,
+          priceAtLabel: s.price,
+        });
 
-      // Resolve pending labels with real 5-day forward returns
-      const ph = priceHistory[s.ticker];
-      const resolved = pendingLabels[s.ticker].filter((p) => p.dayIdx <= i - 5);
-      for (const p of resolved) {
-        const fwdPrice = ph[p.dayIdx + 5];
-        if (fwdPrice !== undefined && p.priceAtLabel > 0) {
-          const fwdReturn = ((fwdPrice - p.priceAtLabel) / p.priceAtLabel) * 100;
-          if (!trainingSamplesByTicker[s.ticker])
-            trainingSamplesByTicker[s.ticker] = [];
-          trainingSamplesByTicker[s.ticker].push({
-            subAspectScores: p.subAspectScores,
-            dimensionScores: p.dimensionScores,
-            forwardReturn: fwdReturn,
-          });
-          if (trainingSamplesByTicker[s.ticker].length > 100)
-            trainingSamplesByTicker[s.ticker].shift();
-        }
-      }
-      pendingLabels[s.ticker] = pendingLabels[s.ticker].filter(
-        (p) => p.dayIdx > i - 5
-      );
+       // Resolve pending labels with real 5-day forward returns
+       // Use priceHistory array position (not scoring day index) to correctly
+       // handle tickers that may have fewer entries than scoring days.
+       const ph = priceHistory[s.ticker];
+       const resolved = pendingLabels[s.ticker].filter((p) => p.priceIdx + 5 <= ph.length - 1);
+       for (const p of resolved) {
+         const fwdPrice = ph[p.priceIdx + 5];
+         if (fwdPrice !== undefined && p.priceAtLabel > 0) {
+           const fwdReturn = ((fwdPrice - p.priceAtLabel) / p.priceAtLabel) * 100;
+           if (!trainingSamplesByTicker[s.ticker])
+             trainingSamplesByTicker[s.ticker] = [];
+            trainingSamplesByTicker[s.ticker].push({
+              subAspectScores: p.subAspectScores,
+              dimensionScores: p.dimensionScores,
+              subDimensionScores: p.subDimensionScores,
+              aspectScores: p.aspectScores,
+              capturedAt: p.capturedAt,
+              volatilityZ: p.volatilityZ,
+              volume: p.volume,
+              priceChange: p.priceChange,
+              marketCap: p.marketCap,
+              forwardReturn: fwdReturn,
+            });
+           if (trainingSamplesByTicker[s.ticker].length > 100)
+             trainingSamplesByTicker[s.ticker].shift();
+         }
+       }
+       pendingLabels[s.ticker] = pendingLabels[s.ticker].filter(
+         (p) => p.priceIdx + 5 > ph.length - 1
+       );
     }
     if ((i + 1) % 10 === 0 || i === scoringDays - 1) {
       console.log(`[seed] Day ${i + 1}/${scoringDays} completed`);
@@ -582,17 +608,20 @@ macroSensitivities[ticker] = betas;
   const trainingRuns: TrainingRunRow[] = [];
 
   if (!incremental) {
-  // Serialize training samples so the Python trainer can consume them.
-  const trainingSamplesPath = await writeTrainingSamples(
-    trainingSamplesByTicker
-  );
+    console.log("[seed] Writing training samples...");
+    // Serialize training samples so the Python trainer can consume them.
+    const trainingSamplesPath = await writeTrainingSamples(
+      trainingSamplesByTicker
+    );
 
-  // Run the Python ML trainer to produce per-symbol, per-level coefficient
-  // artifacts in artifacts/coefficient_store/{ticker}/.
-  const pythonTrained = await runPythonTrainer(
-    trainingSamplesPath,
-    universe.tickers
-  );
+    // Run the Python ML trainer to produce per-symbol, per-level coefficient
+    // artifacts in artifacts/coefficient_store/{ticker}/.
+    console.log("[seed] Running Python ML trainer for " + universe.tickers.length + " tickers...");
+    const pythonTrained = await runPythonTrainer(
+      trainingSamplesPath,
+      universe.tickers
+    );
+    console.log("[seed] Python trainer complete. Trained: " + pythonTrained.size + "/" + universe.tickers.length);
 
   for (const ticker of universe.tickers) {
     const samples = trainingSamplesByTicker[ticker] ?? [];
@@ -656,7 +685,9 @@ macroSensitivities[ticker] = betas;
         ? "python-ensemble trained"
         : "typescript-corr fallback",
     });
-   }
+    }
+
+    console.log("[seed] Learning coefficients for all tickers complete. Persisting...");
 
   // 6. Persist coefficients
   try {
@@ -670,9 +701,10 @@ macroSensitivities[ticker] = betas;
       const batch = sanitizedCoeffs.slice(i, i + 1000);
       await db.coefficient.createMany({ data: batch } as any);
     }
-  } catch {
-    // Ignore duplicates
-  }
+   } catch {
+     // Ignore duplicates
+   }
+  console.log("[seed] Coefficients persisted. Inserting training runs...");
 
   // 7. Training runs
   const existingTrainingRuns = await db.trainingRun.findMany({
@@ -1080,13 +1112,18 @@ async function writeTrainingSamples(
   for (const [ticker, samples] of Object.entries(samplesByTicker)) {
     out[ticker] = samples.map((s) => ({
       dimension_scores: s.dimensionScores,
-      sub_dimension_scores: buildSubDimScores(s.subAspectScores),
-      aspect_scores: buildAspectScores(s.subAspectScores),
+      sub_dimension_scores: s.subDimensionScores ?? buildSubDimScores(s.subAspectScores),
+      aspect_scores: s.aspectScores ?? buildAspectScores(s.subAspectScores),
       sub_aspect_scores: s.subAspectScores,
       dimension_scores_keys: Object.keys(s.dimensionScores),
       sub_dimension_scores_keys: collectSubDimKeys(s.subAspectScores),
       aspect_scores_keys: collectAspectKeys(s.subAspectScores),
       sub_aspect_scores_keys: Object.keys(s.subAspectScores),
+      captured_at: s.capturedAt,
+      volatility_z: s.volatilityZ ?? 0,
+      volume: s.volume ?? 0,
+      price_change: s.priceChange ?? 0,
+      market_cap: s.marketCap ?? 0,
       target_return: s.forwardReturn,
     }));
   }
@@ -1105,10 +1142,15 @@ async function writeTrainingSamples(
 function buildSubDimScores(
   subAspectScores: Record<string, number>
 ): Record<string, number> {
-  const out: Record<string, number> = {};
+  const groups: Record<string, number[]> = {};
   for (const spec of METRIC_UNIVERSE) {
     const key = `${spec.dim}/${spec.subDim}`;
-    out[key] = subAspectScores[spec.subAspect] ?? 50;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(subAspectScores[spec.subAspect] ?? 50);
+  }
+  const out: Record<string, number> = {};
+  for (const [key, scores] of Object.entries(groups)) {
+    out[key] = scores.reduce((a, b) => a + b, 0) / scores.length;
   }
   return out;
 }
@@ -1116,10 +1158,15 @@ function buildSubDimScores(
 function buildAspectScores(
   subAspectScores: Record<string, number>
 ): Record<string, number> {
-  const out: Record<string, number> = {};
+  const groups: Record<string, number[]> = {};
   for (const spec of METRIC_UNIVERSE) {
     const key = `${spec.dim}/${spec.subDim}/${spec.aspect}`;
-    out[key] = subAspectScores[spec.subAspect] ?? 50;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(subAspectScores[spec.subAspect] ?? 50);
+  }
+  const out: Record<string, number> = {};
+  for (const [key, scores] of Object.entries(groups)) {
+    out[key] = scores.reduce((a, b) => a + b, 0) / scores.length;
   }
   return out;
 }
@@ -1151,6 +1198,8 @@ async function runPythonTrainer(
   const result = new Map<string, LearnedCoeffs>();
   try {
     const { spawn } = await import("child_process");
+    // Use stdio: "ignore" for stdout/stderr to prevent buffer deadlock
+    // when Python produces large output or when we kill it via timeout.
     const proc = spawn("python", [
       "scripts/ml/train.py",
       "--input", samplesPath,
@@ -1158,23 +1207,31 @@ async function runPythonTrainer(
       "--symbols", ...tickers,
     ], {
       cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: "ignore",
     });
-    let stderr = "";
-    proc.stderr.on("data", (d: Buffer) => {
-      stderr += d.toString();
-      process.stdout.write(d.toString());
-    });
-    proc.stdout.on("data", (d: Buffer) => {
-      process.stdout.write(d.toString());
-    });
+    // Add a 30-second timeout — if Python training takes longer,
+    // fall back to the TypeScript |corr| learner for each ticker.
+    const timeoutMs = 30_000;
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) {
+        proc.kill("SIGKILL");
+        console.warn("[orchestrator] Python trainer timed out after 30s, falling back to TS learner");
+        done = true;
+      }
+    }, timeoutMs);
     await new Promise<void>((resolve) => {
-      proc.on("close", () => resolve());
-      proc.on("error", () => resolve());
+      proc.on("close", () => {
+        clearTimeout(timer);
+        done = true;
+        resolve();
+      });
+      proc.on("error", () => {
+        clearTimeout(timer);
+        done = true;
+        resolve();
+      });
     });
-    if (stderr && !stderr.includes("WARNING")) {
-      console.error("[orchestrator] Python trainer stderr:", stderr.slice(-500));
-    }
   } catch (err) {
     console.error("[orchestrator] Python trainer failed:", err);
     return result;

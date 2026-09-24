@@ -22,6 +22,7 @@ export function TraceModal({ ticker, open, onOpenChange }: Props) {
     queryKey: ["trace", ticker],
     queryFn: async () => {
       const r = await fetch(`/api/trace/${ticker}`);
+      if (!r.ok) throw new Error(`trace ${r.status}`);
       return r.json();
     },
     enabled: !!ticker && open,

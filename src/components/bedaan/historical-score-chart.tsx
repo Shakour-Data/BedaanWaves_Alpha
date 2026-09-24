@@ -51,13 +51,11 @@ export function HistoricalScoreChart({ ticker }: Props) {
     queryKey: ["history", ticker, range],
     queryFn: async (): Promise<HistoryPoint[]> => {
       const r = await fetch(`/api/scores/${ticker}/history?range=${range}`);
-      if (!r.ok) {
-        if (r.status === 404) return [];
-        const body = await r.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${r.status}`);
-      }
-      const j = await r.json();
-      return Array.isArray(j.points) ? j.points : [];
+      if (r.status === 404) return [];
+      if (!r.ok) throw new Error(`history ${r.status}`);
+      const j = await r.json().catch(() => null);
+      if (!j || !Array.isArray(j.points)) return [];
+      return j.points as HistoryPoint[];
     },
     enabled: !!ticker,
   });

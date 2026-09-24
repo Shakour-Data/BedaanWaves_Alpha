@@ -31,7 +31,13 @@ export async function GET(req: NextRequest) {
 
   const fetchData = (f: string) => {
     try {
-      const d = JSON.parse(readFileSync(f, "utf-8"));
+      const raw = readFileSync(f, "utf-8");
+      // yfinance may emit raw NaN / Infinity — not valid JSON. Sanitize first.
+      const sanitized = raw
+        .replace(/:\s*NaN\b/g, ": null")
+        .replace(/:\s*Infinity\b/g, ": null")
+        .replace(/:\s*-Infinity\b/g, ": null");
+      const d = JSON.parse(sanitized);
       return { fetched_at: d.fetched_at, source: d.source };
     } catch {
       return null;

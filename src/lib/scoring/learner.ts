@@ -21,7 +21,14 @@ import type { CoefficientBundle } from "./types";
 export interface TrainingSample {
   subAspectScores: Record<string, number>; // 0..100
   dimensionScores: Record<string, number>;
+  subDimensionScores?: Record<string, number>;
+  aspectScores?: Record<string, number>;
   forwardReturn: number; // 5-day forward return %
+  capturedAt?: string; // ISO timestamp used by the Python trainer
+  volatilityZ?: number;
+  volume?: number;
+  priceChange?: number;
+  marketCap?: number;
 }
 
 export interface LearnedCoeffs {

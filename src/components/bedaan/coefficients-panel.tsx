@@ -38,6 +38,7 @@ export function CoefficientsPanel({ ticker, compareTicker }: Props) {
     queryKey: ["coefficients", ticker],
     queryFn: async () => {
       const r = await fetch(`/api/coefficients/${ticker}`);
+      if (!r.ok) throw new Error(`coefficients ${r.status}`);
       return r.json();
     },
     enabled: !!ticker,
@@ -48,6 +49,7 @@ export function CoefficientsPanel({ ticker, compareTicker }: Props) {
     queryFn: async () => {
       if (!compareTicker) return null;
       const r = await fetch(`/api/coefficients/${compareTicker}`);
+      if (!r.ok) throw new Error(`coefficients ${r.status}`);
       return r.json();
     },
     enabled: !!compareTicker,

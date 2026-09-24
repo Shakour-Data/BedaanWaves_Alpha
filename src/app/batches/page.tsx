@@ -44,6 +44,7 @@ export default function BatchesPage() {
     queryKey: ["ingestion-batches"],
     queryFn: async () => {
       const r = await fetch("/api/ingestion/batches");
+      if (!r.ok) throw new Error(`batches ${r.status}`);
       return r.json();
     },
     refetchInterval: 30_000,

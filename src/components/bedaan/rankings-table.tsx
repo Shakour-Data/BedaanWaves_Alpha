@@ -387,6 +387,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
     queryFn: async () => {
       if (!search.trim()) return { symbols: [] as { ticker: string; name: string; sector: string; isEtf: boolean }[] };
       const r = await fetch(`/api/symbols?q=${encodeURIComponent(search)}&limit=10`);
+      if (!r.ok) throw new Error(`symbols ${r.status}`);
       return r.json() as Promise<{ symbols: { ticker: string; name: string; sector: string; isEtf: boolean }[] }>;
     },
     enabled: search.trim().length > 0,
@@ -462,6 +463,7 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
         sp.set("columnFilters", JSON.stringify(activeColumnFilters));
       }
       const r = await fetch(`/api/rankings?${sp}`);
+      if (!r.ok) throw new Error(`rankings ${r.status}`);
       return r.json();
     },
     refetchInterval: 30_000,

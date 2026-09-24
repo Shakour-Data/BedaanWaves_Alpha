@@ -23,6 +23,7 @@ export function PeerComparison({ ticker }: Props) {
       const params = new URLSearchParams();
       if (compareTicker) params.set("compare", compareTicker);
       const r = await fetch(`/api/peers/${ticker}?${params.toString()}`);
+      if (!r.ok) throw new Error(`peers ${r.status}`);
       return r.json();
     },
     enabled: !!ticker,

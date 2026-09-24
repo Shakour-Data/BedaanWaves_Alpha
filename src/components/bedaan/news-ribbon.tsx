@@ -41,6 +41,7 @@ export function NewsRibbon({ onSymbolClick }: Props) {
     queryKey: ["news"],
     queryFn: async () => {
       const r = await fetch("/api/news?limit=30");
+      if (!r.ok) throw new Error(`news ${r.status}`);
       const j = await r.json();
       return j.items as NewsItem[];
     },

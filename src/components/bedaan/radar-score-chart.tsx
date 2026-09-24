@@ -39,6 +39,7 @@ export function RadarScoreChart({ ticker }: Props) {
     queryKey: ["radar", ticker],
     queryFn: async () => {
       const r = await fetch(`/api/radar/${ticker}`);
+      if (!r.ok) throw new Error(`radar ${r.status}`);
       return r.json();
     },
     enabled: !!ticker,

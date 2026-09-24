@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Activity, Check, DollarSign, Wind, ChevronDown, TrendingUp, Globe, Calendar, Clock, BarChart3, X } from "lucide-react";
 import { ResponsiveContainer, Treemap } from "recharts";
+import { apiFetchSafe } from "@/lib/api-client";
 import {
   rsi,
   macd,
@@ -103,7 +104,7 @@ export function NativeCandlestickChart({
     queryKey: ["candles", ticker, range],
     queryFn: async () => {
       const r = await fetch(`/api/candles/${ticker}?range=${range}`);
-      if (!r.ok) throw new Error("candles");
+      if (!r.ok) throw new Error(`candles ${r.status}`);
       return r.json();
     },
     enabled: !!ticker,
@@ -269,6 +270,7 @@ export function NativeHeatmap({ height = 600 }: { height?: number }) {
     queryKey: ["heatmap-rankings"],
     queryFn: async () => {
       const r = await fetch("/api/heatmap");
+      if (!r.ok) throw new Error(`heatmap ${r.status}`);
       return r.json();
     },
     staleTime: 5 * 60_000,
@@ -461,8 +463,8 @@ export function NativeEconomicCalendar({ height = 450 }: { height?: number }) {
     queryKey: ["macro-calendar", refreshKey],
     queryFn: async () => {
       const [m, n] = await Promise.all([
-        fetch("/api/macro").then((r) => r.json()),
-        fetch("/api/news").then((r) => r.json()),
+        apiFetchSafe<{ releases: MacroIndicator[]; market: MacroIndicator[] }>("/api/macro"),
+        apiFetchSafe<{ items: Array<{ headline: string; source: string; publishedAt: string; sentiment: string; tickers: string[] }> }>("/api/news"),
       ]);
       // Include international market indicators as economic calendar entries
       const intlMarket = (m.market || []).filter((i: MacroIndicator) =>
@@ -713,8 +715,8 @@ export function NativeMarketOverview({ height = 450 }: { height?: number }) {
     queryKey: ["market-overview", refreshKey],
     queryFn: async () => {
       const [m, ranks] = await Promise.all([
-        fetch("/api/macro").then((r) => r.json()),
-        fetch("/api/rankings?pageSize=100&page=1").then((r) => r.json()),
+        apiFetchSafe<{ market: MacroIndicator[] }>("/api/macro"),
+        apiFetchSafe<{ rows: Array<{ priceChange: number }> }>("/api/rankings?pageSize=100&page=1"),
       ]);
       const breadth = { bullish: 0, bearish: 0, neutral: 0 };
       for (const row of ranks.rows) {
@@ -839,7 +841,11 @@ export function NativeTechnicalPanel({ ticker }: { ticker: string }) {
     isError,
   } = useQuery<{ ticker: string; bars: CandleBar[] }>({
     queryKey: ["technical", ticker],
-    queryFn: async () => fetch(`/api/candles/${ticker}?range=3M`).then((r) => r.json()),
+    queryFn: async () => {
+      const r = await fetch(`/api/candles/${ticker}?range=3M`);
+      if (!r.ok) throw new Error(`candles ${r.status}`);
+      return r.json();
+    },
     enabled: !!ticker,
     staleTime: 5 * 60_000,
   });

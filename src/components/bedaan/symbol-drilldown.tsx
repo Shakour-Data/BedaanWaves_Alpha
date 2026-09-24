@@ -97,10 +97,11 @@ export function SymbolDrilldown({ ticker, onClose, compareTicker, onCompareChang
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const searchQ = useQuery({
+   const searchQ = useQuery({
     queryKey: ["compare-symbols", compareInput],
     queryFn: async () => {
       const r = await fetch(`/api/symbols?q=${encodeURIComponent(compareInput)}&limit=10`);
+      if (!r.ok) throw new Error(`search ${r.status}`);
       return r.json() as Promise<{ symbols: { ticker: string; name: string; sector: string; isEtf: boolean }[] }>;
     },
     enabled: compareInput.length > 0 && !compareTicker,
