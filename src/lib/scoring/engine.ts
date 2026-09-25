@@ -124,13 +124,18 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
 const SENTIMENT_DIM = "sentiment";
     const AI_DIM = "ai";
     const subAspectScoreMap: Record<string, Record<string, number>> = {};
-    for (const ticker of tickers) subAspectScoreMap[ticker] = {};
+    const presentMetrics = new Map<string, Set<string>>();
+    for (const ticker of tickers) {
+      subAspectScoreMap[ticker] = {};
+      presentMetrics.set(ticker, new Set());
+    }
     for (const spec of METRIC_UNIVERSE) {
       if (spec.dim === "macro") {
         // Time-series scoring: score the current macro value relative to its
         // historical distribution. All tickers share the same base score.
         const hist = input.macroHistory?.[spec.dbField] ?? [];
-        const val = assetMetrics[tickers[0]]?.[spec.dbField] ?? null;
+        const val = tickers.length > 0 ? assetMetrics[tickers[0]]?.[spec.dbField] ?? null : null;
+        const macroPresent = val !== null && Number.isFinite(val);
         const baseScore = timeSeriesScore(val, hist, spec.lowerIsBetter);
         // Modulate by per-ticker sensitivity: positive beta amplifies the
         // deviation from 50 in the favorable direction; negative beta reverses it.
@@ -138,6 +143,7 @@ const SENTIMENT_DIM = "sentiment";
           const beta = clamp(input.macroSensitivities?.[tickers[i]]?.[spec.dbField] ?? 0, -1, 1);
           const adjusted = 50 + (baseScore - 50) * (1 + beta * 0.6);
           subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(adjusted, 0, 100);
+          if (macroPresent) presentMetrics.get(tickers[i])!.add(spec.subAspect);
         }
       } else if (spec.dim === SENTIMENT_DIM) {
         // Sentiment sub-aspects are already on a 0-100 scale from
@@ -145,10 +151,11 @@ const SENTIMENT_DIM = "sentiment";
         // cross-sectionally rank, which would obliterate absolute sentiment.
         for (let i = 0; i < n; i++) {
           const raw = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
-          if (raw === null || Number.isNaN(raw as number)) {
+          if (raw === null || !Number.isFinite(raw)) {
             subAspectScoreMap[tickers[i]][spec.subAspect] = 50.0;
           } else {
             subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(raw, 0, 100);
+            presentMetrics.get(tickers[i])!.add(spec.subAspect);
           }
         }
       } else if (spec.dim === AI_DIM) {
@@ -159,10 +166,11 @@ const SENTIMENT_DIM = "sentiment";
         // AI signals toward 50.
         for (let i = 0; i < n; i++) {
           const raw = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
-          if (raw === null || Number.isNaN(raw as number)) {
+          if (raw === null || !Number.isFinite(raw)) {
             subAspectScoreMap[tickers[i]][spec.subAspect] = 50.0;
           } else {
             subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(raw, 0, 100);
+            presentMetrics.get(tickers[i])!.add(spec.subAspect);
           }
         }
       } else {
@@ -171,13 +179,14 @@ const SENTIMENT_DIM = "sentiment";
         const col: (number | null)[] = tickers.map(
           (t) => {
             const raw = assetMetrics[t]?.[spec.dbField] ?? null;
-            if (raw === null) return null;
+            if (raw === null || !Number.isFinite(raw)) return null;
             return normalizeIndicatorScore(spec.dbField, raw);
           }
         );
         const scores = crossSectionalScore(col, spec.lowerIsBetter);
         for (let i = 0; i < n; i++) {
           subAspectScoreMap[tickers[i]][spec.subAspect] = scores[i];
+          if (col[i] !== null) presentMetrics.get(tickers[i])!.add(spec.subAspect);
         }
       }
    }

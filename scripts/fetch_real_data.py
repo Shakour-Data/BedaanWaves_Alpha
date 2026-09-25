@@ -245,6 +245,9 @@ def _build_fundamental_snapshots(tk: yf.Ticker, info: dict, ohlcv: list[dict]) -
         return []
 
     period_ends = sorted(pd.to_datetime(fin.columns), key=lambda value: pd.Timestamp(value))
+    fin = fin.reindex(columns=period_ends)
+    bs = bs.reindex(columns=period_ends)
+    cf = cf.reindex(columns=period_ends)
     releases = _release_map(tk, period_ends)
     prices = {row["date"]: float(row["close"]) for row in ohlcv}
     snapshots: list[dict] = []
