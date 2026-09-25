@@ -279,6 +279,7 @@ tests/python/
 # Python refresh scripts (one-off data fetchers)
 /scripts/fetch_live_prices.py
 /scripts/refresh_ohlcv.py
+/scripts/incremental_ohlcv_update.py
 
 # One-off test/debug scripts
 /test-db.ts

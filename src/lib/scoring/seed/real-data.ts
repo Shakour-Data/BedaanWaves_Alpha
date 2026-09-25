@@ -10,7 +10,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { METRIC_UNIVERSE } from "../metric-universe";
-import { clamp } from "../transforms";
+import { clamp, crossSectionalScore } from "../transforms";
 import { SEED_TICKERS_DEDUP, type SeedTicker } from "./universe";
 import { computeNewsSentimentForDayFromDB } from "@/lib/news/db-queries";
 
@@ -64,9 +64,20 @@ interface RealInfo {
   receivablesTurnover?: number;
   debtToAssets?: number;
 }
+
+export interface FundamentalSnapshot {
+  reported_at: string;
+  fiscal_period_end: string;
+  effective_at: string;
+  source: string;
+  metrics: Record<string, number | null>;
+}
+
 interface RealTickerData {
   ohlcv: RealBar[];
   info: RealInfo;
+  info_effective_at?: string;
+  fundamental_history?: FundamentalSnapshot[];
 }
 interface RealMacroPoint {
   date: string;
@@ -119,6 +130,33 @@ function normalizeMacroPoints(points: unknown): RealMacroPoint[] {
   }).sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function normalizeFundamentalSnapshots(value: unknown): FundamentalSnapshot[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): FundamentalSnapshot[] => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as Partial<FundamentalSnapshot>;
+    const reportedAt = typeof candidate.reported_at === "string" ? candidate.reported_at : null;
+    const fiscalPeriodEnd = typeof candidate.fiscal_period_end === "string" ? candidate.fiscal_period_end : null;
+    const effectiveAt = typeof candidate.effective_at === "string" ? candidate.effective_at : reportedAt;
+    const source = typeof candidate.source === "string" ? candidate.source : "unknown";
+    const metrics = candidate.metrics && typeof candidate.metrics === "object"
+      ? candidate.metrics as Record<string, number | null>
+      : {};
+    if (!reportedAt || !fiscalPeriodEnd || !effectiveAt) return [];
+    const normalizedMetrics: Record<string, number | null> = {};
+    for (const [key, raw] of Object.entries(metrics)) {
+      normalizedMetrics[key] = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+    }
+    return [{
+      reported_at: reportedAt,
+      fiscal_period_end: fiscalPeriodEnd,
+      effective_at: effectiveAt,
+      source,
+      metrics: normalizedMetrics,
+    }];
+  }).sort((a, b) => a.effective_at.localeCompare(b.effective_at));
+}
+
 export function loadRealData(): {
   per_ticker: Record<string, RealTickerData>;
   macro: Record<string, RealMacroPoint[]>;
@@ -146,6 +184,11 @@ export function loadRealData(): {
 
   try {
     data = JSON.parse(readFileSync(DATA_FILE, "utf-8")) as RealDataFile;
+    for (const tickerData of Object.values(data.per_ticker ?? {})) {
+      if (!tickerData.info_effective_at && data.window?.end) {
+        tickerData.info_effective_at = data.window.end;
+      }
+    }
   } catch {
     // market data file may not exist yet — degrade gracefully with empty structures
   }
@@ -970,12 +1013,15 @@ export class RealTickerWalk {
   public industry: string;
   public marketCap: number;
   public isEtf: boolean;
-  public fundamentalHistory: Record<string, number[]> = {};
+  public fundamentalHistory: FundamentalSnapshot[] = [];
+  private readonly infoEffectiveAt: string | null;
 
   constructor(ticker: string, data: RealTickerData, seedTicker?: SeedTicker) {
     this.ticker = ticker;
     this.ohlcv = data.ohlcv;
     this.info = data.info;
+    this.infoEffectiveAt = data.info_effective_at ?? null;
+    this.fundamentalHistory = normalizeFundamentalSnapshots(data.fundamental_history);
     this.beta = data.info.beta ?? seedTicker?.beta ?? 1;
     this.sector = data.info.sector ?? seedTicker?.sector ?? "Unknown";
     this.industry = data.info.industry ?? seedTicker?.industry ?? "Unknown";
@@ -983,8 +1029,24 @@ export class RealTickerWalk {
     this.isEtf = seedTicker?.isEtf ?? false;
   }
 
+  private snapshotForDate(dateStr: string): FundamentalSnapshot | null {
+    let selected: FundamentalSnapshot | null = null;
+    for (const snapshot of this.fundamentalHistory) {
+      if (snapshot.effective_at <= dateStr) {
+        selected = snapshot;
+      } else {
+        break;
+      }
+    }
+    return selected;
+  }
+
+  private legacyInfoAvailable(dateStr: string): boolean {
+    return this.infoEffectiveAt !== null && dateStr >= this.infoEffectiveAt;
+  }
+
   // Compute all metrics for day `idx` using real candle history [0..idx]
-  metricsForDay(idx: number, marketReturns: number[], riskFreeRate: number | null = null): Record<string, number | null> {
+  metricsForDay(idx: number, marketReturns: number[], riskFreeRate: number | null = null, dateStr = this.ohlcv[idx]?.date ?? ""): Record<string, number | null> {
     const bars = this.ohlcv.slice(0, idx + 1);
     if (bars.length === 0) return {};
     const closes = bars.map((b) => b.close);
@@ -1132,63 +1194,59 @@ export class RealTickerWalk {
     m["sortino_ratio"] = sortino(dailyReturnsPct, riskFreeRate ?? 0);
     m["beta"] = beta(dailyReturnsPct, marketReturns.slice(-Math.min(dailyReturnsPct.length, marketReturns.length))) ?? this.beta;
 
-    // ── Fundamental indicators (real, from yfinance info + financial statements) ──
-    // Per spec §1.2: NO synthetic/fabricated fundamentals. If yfinance info
-    // is unavailable, all fundamental metrics remain null (→ 50.0 neutral at L4).
-    const info = this.info;
-    m["risk_score"] = (Math.abs(m["volatility_z"] ?? 0) + (m["max_drawdown"] ?? 0)) / 2;
-
-    // Base fundamental values from yfinance info (static, update quarterly)
+    // ── Fundamental indicators (point-in-time statements) ──
+    const date = dateStr || bars[bars.length - 1].date;
+    const snapshot = this.snapshotForDate(date);
+    const info = snapshot ? null : this.legacyInfoAvailable(date) ? this.info : null;
+    const snapshotMetrics = snapshot?.metrics ?? {};
     const baseFundamentals: Record<string, number | null> = {
-      pe_ratio: info?.trailingPE ?? null,
-      pb_ratio: info?.priceToBook ?? null,
-      ev_ebitda: info?.enterpriseToEbitda ?? null,
-      peg_ratio: info?.pegRatio ?? null,
-      price_to_sales: info?.priceToSalesTrailing12Months ?? null,
-      price_to_cash_flow: info?.priceToCashFlow ?? null,
-      payout_ratio: info?.payoutRatio !== undefined ? info.payoutRatio * 100 : null,
-      roe: info?.returnOnEquity !== undefined ? info.returnOnEquity * 100 : null,
-      roa: info?.returnOnAssets !== undefined ? info.returnOnAssets * 100 : null,
-      roic: info?.returnOnInvestedCapital !== undefined ? info.returnOnInvestedCapital * 100 : null,
-      profit_margin: info?.profitMargins !== undefined ? info.profitMargins * 100 : null,
-      gross_margin: info?.grossMargins !== undefined ? info.grossMargins * 100 : null,
-      operating_margin: info?.operatingMargins !== undefined ? info.operatingMargins * 100 : null,
-      net_margin: info?.profitMargins !== undefined ? info.profitMargins * 100 : null,
-      ebitda_margin: info?.ebitdaMargin !== undefined ? info.ebitdaMargin : null,
-      operating_leverage: info?.operatingLeverage !== undefined ? info.operatingLeverage : null,
-      revenue_growth: info?.revenueGrowth !== undefined ? info.revenueGrowth * 100 : null,
-      eps_growth: info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null,
-      earnings_growth: info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null,
-      free_cash_flow_growth: info?.freeCashFlowGrowth !== undefined ? info.freeCashFlowGrowth * 100 : null,
-      current_ratio: info?.currentRatio ?? null,
-      quick_ratio: info?.quickRatio ?? null,
-      cash_ratio: info?.cashRatio !== undefined ? info.cashRatio : null,
-      asset_turnover: info?.assetTurnover !== undefined ? info.assetTurnover : null,
-      inventory_turnover: info?.inventoryTurnover !== undefined ? info.inventoryTurnover : null,
-      receivables_turnover: info?.receivablesTurnover !== undefined ? info.receivablesTurnover : null,
-      debt_to_equity: info?.debtToEquity !== undefined ? info.debtToEquity : null,
-      debt_to_assets: info?.debtToAssets !== undefined ? info.debtToAssets : null,
-      interest_coverage: info?.interestCoverage !== undefined ? info.interestCoverage : null,
-      debt_to_ebitda: info?.totalDebtToEbitda !== undefined ? info.totalDebtToEbitda : null,
-      dividend_yield: info?.dividendYield !== undefined ? info.dividendYield * 100 : null,
-      dividend_growth_rate: null,
-      free_cash_flow_yield: info?.freeCashFlowYield !== undefined ? info.freeCashFlowYield : null,
-      operating_cash_flow_ratio: info?.operatingCashFlowRatio !== undefined ? info.operatingCashFlowRatio : null,
-      capex_ratio: null,
-      cash_conversion_ratio: null,
-      roe_stability: null,
-      earnings_quality: null,
-      default_prob: info?.debtToEquity != null
-        ? ((info.debtToEquity / 100) / (1 + info.debtToEquity / 100)) * 100
-        : null,
-      credit_spread: info?.debtToEquity != null
-        ? (((info.debtToEquity / 100) / (1 + info.debtToEquity / 100)) * 100) * 1.5 + 50
-        : null,
-      bid_ask_spread: null, // computed below from price data
+      pe_ratio: snapshotMetrics.pe_ratio ?? info?.trailingPE ?? null,
+      pb_ratio: snapshotMetrics.pb_ratio ?? info?.priceToBook ?? null,
+      ev_ebitda: snapshotMetrics.ev_ebitda ?? info?.enterpriseToEbitda ?? null,
+      peg_ratio: snapshotMetrics.peg_ratio ?? info?.pegRatio ?? null,
+      price_to_sales: snapshotMetrics.price_to_sales ?? info?.priceToSalesTrailing12Months ?? null,
+      price_to_cash_flow: snapshotMetrics.price_to_cash_flow ?? info?.priceToCashFlow ?? null,
+      payout_ratio: snapshotMetrics.payout_ratio ?? (info?.payoutRatio !== undefined ? info.payoutRatio * 100 : null),
+      roe: snapshotMetrics.roe ?? (info?.returnOnEquity !== undefined ? info.returnOnEquity * 100 : null),
+      roa: snapshotMetrics.roa ?? (info?.returnOnAssets !== undefined ? info.returnOnAssets * 100 : null),
+      roic: snapshotMetrics.roic ?? (info?.returnOnInvestedCapital !== undefined ? info.returnOnInvestedCapital * 100 : null),
+      profit_margin: snapshotMetrics.profit_margin ?? (info?.profitMargins !== undefined ? info.profitMargins * 100 : null),
+      gross_margin: snapshotMetrics.gross_margin ?? (info?.grossMargins !== undefined ? info.grossMargins * 100 : null),
+      operating_margin: snapshotMetrics.operating_margin ?? (info?.operatingMargins !== undefined ? info.operatingMargins * 100 : null),
+      net_margin: snapshotMetrics.net_margin ?? (info?.profitMargins !== undefined ? info.profitMargins * 100 : null),
+      ebitda_margin: snapshotMetrics.ebitda_margin ?? (info?.ebitdaMargin !== undefined ? info.ebitdaMargin * 100 : null),
+      operating_leverage: snapshotMetrics.operating_leverage ?? info?.operatingLeverage ?? null,
+      revenue_growth: snapshotMetrics.revenue_growth ?? (info?.revenueGrowth !== undefined ? info.revenueGrowth * 100 : null),
+      eps_growth: snapshotMetrics.eps_growth ?? (info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null),
+      earnings_growth: snapshotMetrics.earnings_growth ?? (info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null),
+      free_cash_flow_growth: snapshotMetrics.free_cash_flow_growth ?? (info?.freeCashFlowGrowth !== undefined ? info.freeCashFlowGrowth * 100 : null),
+      current_ratio: snapshotMetrics.current_ratio ?? info?.currentRatio ?? null,
+      quick_ratio: snapshotMetrics.quick_ratio ?? info?.quickRatio ?? null,
+      cash_ratio: snapshotMetrics.cash_ratio ?? info?.cashRatio ?? null,
+      asset_turnover: snapshotMetrics.asset_turnover ?? info?.assetTurnover ?? null,
+      inventory_turnover: snapshotMetrics.inventory_turnover ?? info?.inventoryTurnover ?? null,
+      receivables_turnover: snapshotMetrics.receivables_turnover ?? info?.receivablesTurnover ?? null,
+      debt_to_equity: snapshotMetrics.debt_to_equity ?? (info?.debtToEquity !== undefined ? info.debtToEquity : null),
+      debt_to_assets: snapshotMetrics.debt_to_assets ?? (info?.debtToAssets !== undefined ? info.debtToAssets * 100 : null),
+      interest_coverage: snapshotMetrics.interest_coverage ?? info?.interestCoverage ?? null,
+      debt_to_ebitda: snapshotMetrics.debt_to_ebitda ?? info?.totalDebtToEbitda ?? null,
+      dividend_yield: snapshotMetrics.dividend_yield ?? (info?.dividendYield !== undefined ? info.dividendYield * 100 : null),
+      dividend_growth_rate: snapshotMetrics.dividend_growth_rate ?? null,
+      free_cash_flow_yield: snapshotMetrics.free_cash_flow_yield ?? info?.freeCashFlowYield ?? null,
+      operating_cash_flow_ratio: snapshotMetrics.operating_cash_flow_ratio ?? info?.operatingCashFlowRatio ?? null,
+      capex_ratio: snapshotMetrics.capex_ratio ?? null,
+      cash_conversion_ratio: snapshotMetrics.cash_conversion_ratio ?? null,
+      roe_stability: snapshotMetrics.roe_stability ?? null,
+      earnings_quality: snapshotMetrics.earnings_quality ?? null,
+      financial_leverage: snapshotMetrics.financial_leverage ?? null,
+      earnings_stability: snapshotMetrics.earnings_stability ?? null,
+      dividend_stability: snapshotMetrics.dividend_stability ?? null,
+      accounting_quality: snapshotMetrics.accounting_quality ?? null,
+      bid_ask_spread: null,
       volume_ratio: info?.averageVolume != null && info?.averageDailyVolume10Day != null && info.averageVolume > 0
         ? info.averageDailyVolume10Day / info.averageVolume
         : null,
-      risk_score: null, // computed below
+      risk_score: null,
     };
 
     // Compute bid_ask_spread from price data
@@ -1208,52 +1266,42 @@ export class RealTickerWalk {
     // Compute risk_score from technicals
     baseFundamentals["risk_score"] = (Math.abs(m["volatility_z"] ?? 0) + (m["max_drawdown"] ?? 0)) / 2;
 
-    // Store base fundamental values for variant computation
     for (const [key, val] of Object.entries(baseFundamentals)) {
       m[key] = val;
     }
 
-    // ─── INDICATOR_VARIANTS for fundamentals (spec §2.1: ≥5 per sub-aspect) ───
-    // Apply rolling_mean, rolling_volatility, lag_1, normalized to create daily variation
-    // from quarterly-updated fundamental data. This gives each fundamental sub-aspect
-    // 5 daily-changing features instead of 1 static value.
-    if (!this.fundamentalHistory) this.fundamentalHistory = {};
-    for (const [key, val] of Object.entries(baseFundamentals)) {
-      if (val !== null && Number.isFinite(val)) {
-        if (!this.fundamentalHistory[key]) this.fundamentalHistory[key] = [];
-        this.fundamentalHistory[key].push(val);
-        // Keep last 252 days (1 year) of history
-        if (this.fundamentalHistory[key].length > 252) this.fundamentalHistory[key].shift();
-
-        const hist = this.fundamentalHistory[key];
-        // rolling_mean (20-day)
-        const rm = rollingMean(hist, 20);
-        if (rm !== null) m[`${key}__rolling_mean`] = rm;
-        // rolling_volatility (20-day std)
-        const rv = rollingVolatility(hist, 20);
-        if (rv !== null) m[`${key}__rolling_volatility`] = rv;
-        // lag_1
-        const lag = lagValue(hist, 1);
-        if (lag !== null) m[`${key}__lag_1`] = lag;
-        // normalized (cross-sectional would need all tickers; use time-series z-score)
-        const mean = hist.reduce((a, b) => a + b, 0) / hist.length;
-        const std = Math.sqrt(hist.reduce((a, b) => a + (b - mean) ** 2, 0) / hist.length);
-        if (std > 0) {
-          m[`${key}__normalized`] = clamp(50 + ((val - mean) / std) * 15, 0, 100);
-        }
-      }
+    const fundamentalKeys = Object.keys(baseFundamentals);
+    const snapshotHistory = this.fundamentalHistory.filter((s) => s.effective_at <= date);
+    for (const key of fundamentalKeys) {
+      const values = snapshotHistory
+        .map((s) => s.metrics[key])
+        .filter((v): v is number => v !== null && Number.isFinite(v));
+      if (values.length === 0) continue;
+      const current = values[values.length - 1];
+      const rolling = values.slice(-4);
+      const rollingMeanValue = rolling.length > 0
+        ? rolling.reduce((a, b) => a + b, 0) / rolling.length
+        : null;
+      const rollingMeanStd = rolling.length > 1
+        ? Math.sqrt(rolling.reduce((a, b) => a + (b - (rollingMeanValue ?? 0)) ** 2, 0) / rolling.length)
+        : null;
+      const previous = values.length > 1 ? values[values.length - 2] : null;
+      m[`${key}__rolling_mean`] = rollingMeanValue;
+      m[`${key}__rolling_volatility`] = rollingMeanStd;
+      m[`${key}__lag_1`] = previous;
+      m[`${key}__revision`] = previous !== null && previous !== 0
+        ? ((current - previous) / Math.abs(previous)) * 100
+        : null;
     }
-
-    // default_prob / credit_spread: real proxies from yfinance debtToEquity
-    // yfinance reports debtToEquity as a percentage (e.g. 78.445 = 78.445%),
-    // so we convert to a ratio before the debt-to-capital transformation.
-    // Default probability proxy: D/(D+E) = (D/E) / (1 + D/E).
-    m["default_prob"] = info?.debtToEquity != null
-      ? ((info.debtToEquity / 100) / (1 + info.debtToEquity / 100)) * 100
+    m["fundamental_freshness_days"] = snapshot
+      ? Math.max(0, Math.floor((new Date(date).getTime() - new Date(snapshot.effective_at).getTime()) / 86_400_000))
       : null;
-    // Credit spread proxy (basis points): derived from default probability
-    // with a distinct formula so it isn't identical to default_prob.
-    // Higher default probability → wider credit spread.
+    m["fundamental_coverage"] = fundamentalKeys.filter((key) => m[key] !== null && m[key] !== undefined).length / fundamentalKeys.length;
+
+    const debtToEquity = m["debt_to_equity"];
+    m["default_prob"] = debtToEquity != null
+      ? ((debtToEquity / 100) / (1 + debtToEquity / 100)) * 100
+      : null;
     m["credit_spread"] = m["default_prob"] != null
       ? m["default_prob"] * 1.5 + 50
       : null;
@@ -1562,6 +1610,22 @@ export function computeMarketReturns(universe: LoadedUniverse): number[] {
 }
 
 // ─── Generate a single day's metrics from real data ────────────────────────
+function peerNormalize(
+  values: Record<string, Record<string, number | null>>,
+  specs: Array<{ subAspect: string; lowerIsBetter: boolean }>
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const spec of specs) {
+    const tickers = Object.keys(values);
+    const column = tickers.map((ticker) => values[ticker]?.[spec.subAspect] ?? null);
+    const scores = crossSectionalScore(column, spec.lowerIsBetter);
+    for (let i = 0; i < tickers.length; i++) {
+      if (column[i] !== null) out[`${tickers[i]}:${spec.subAspect}`] = scores[i];
+    }
+  }
+  return out;
+}
+
 export async function generateRealDay(
   universe: LoadedUniverse,
   dayIdx: number,
@@ -1618,7 +1682,7 @@ export async function generateRealDay(
       };
       // Compute metrics using real candle history up to this date
       const realRf = macro.fed_funds_rate !== undefined ? macro.fed_funds_rate : null;
-      const m = walk.metricsForDay(barIdx, marketReturns, realRf);
+      const m = walk.metricsForDay(barIdx, marketReturns, realRf, dateStr);
       // Add macro metrics mapped to METRIC_UNIVERSE subAspect names
       const macroMapped = mapMacroToSubAspects(macro);
       for (const [k, v] of Object.entries(macroMapped)) {
@@ -1672,6 +1736,17 @@ export async function generateRealDay(
       assetMetrics[ticker] = neutralMetrics;
       // No price data — use placeholder
       prices[ticker] = { price: 0, priceChange: 0, volume: 0 };
+    }
+  }
+
+  const peerValues = peerNormalize(
+    assetMetrics,
+    METRIC_UNIVERSE.filter((spec) => spec.dim === "fundamental")
+  );
+  for (const ticker of universe.tickers) {
+    for (const key of METRIC_UNIVERSE.filter((spec) => spec.dim === "fundamental").map((spec) => spec.subAspect)) {
+      const normalized = peerValues[`${ticker}:${key}`];
+      if (normalized !== undefined) assetMetrics[ticker][`${key}__normalized`] = normalized;
     }
   }
 

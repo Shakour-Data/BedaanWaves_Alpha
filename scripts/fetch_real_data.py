@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
 # Real NASDAQ tickers — high-liquidity, well-known symbols across sectors.
 # yfinance has rate limits, so we target ~80 to be safe.
@@ -110,15 +111,60 @@ def fetch_macro_data() -> dict:
     return macro
 
 def _safe_get(df: pd.DataFrame, key: str, idx: int = 0) -> float | None:
-    """Safely get a value from a financial statement DataFrame."""
+    """Safely get a finite value from a financial statement DataFrame."""
     try:
-        if key in df.index:
-            val = df.loc[key].iloc[idx]
-            if pd.notna(val):
-                return float(val)
+        if idx < 0 or key not in df.index or idx >= len(df.columns):
+            return None
+        val = df.loc[key].iloc[idx]
+        return float(val) if pd.notna(val) and np.isfinite(float(val)) else None
     except Exception:
-        pass
-    return None
+        return None
+
+
+def _ttm(frame: pd.DataFrame, period_idx: int, key: str, quarters: int = 4) -> float | None:
+    """Sum the latest available quarterly values ending at period_idx."""
+    try:
+        if period_idx < 0 or key not in frame.index or period_idx >= len(frame.columns):
+            return None
+        values = [frame.loc[key, j] for j in range(max(0, period_idx - quarters + 1), period_idx + 1)]
+        values = [float(v) for v in values if pd.notna(v) and np.isfinite(float(v))]
+        return sum(values) if len(values) == min(quarters, period_idx + 1) else None
+    except Exception:
+        return None
+
+
+def _statement_ratio(numerator: float | None, denominator: float | None, scale: float = 1.0) -> float | None:
+    if numerator is None or denominator is None or abs(denominator) < 1e-12:
+        return None
+    return numerator / denominator * scale
+
+
+def _growth(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None or abs(previous) < 1e-12:
+        return None
+    return (current - previous) / abs(previous) * 100
+
+
+def _release_map(tk: yf.Ticker, period_ends: list[pd.Timestamp]) -> dict[str, str]:
+    """Map fiscal period ends to the first subsequent reported earnings date."""
+    try:
+        dates = tk.earnings_dates
+        if dates is None or dates.empty:
+            return {}
+        reported = dates.dropna(subset=["Reported EPS"])
+        release_index = pd.to_datetime(reported.index)
+        if isinstance(release_index, pd.DatetimeIndex) and release_index.tz is not None:
+            release_index = release_index.tz_localize(None)
+        release_dates = sorted(release_index.normalize())
+        out: dict[str, str] = {}
+        for period in period_ends:
+            candidates = [d for d in release_dates if d >= period and d <= period + pd.Timedelta(days=100)]
+            if candidates:
+                out[period.strftime("%Y-%m-%d")] = candidates[0].strftime("%Y-%m-%d")
+        return out
+    except Exception:
+        return {}
+
 
 def _compute_fundamentals_from_statements(tk: yf.Ticker, info: dict) -> dict:
     """Compute additional fundamental metrics from financial statements."""
@@ -133,8 +179,6 @@ def _compute_fundamentals_from_statements(tk: yf.Ticker, info: dict) -> dict:
     if fin is None or fin.empty or bs is None or bs.empty or cf is None or cf.empty:
         return out
 
-    # Most recent column (index 0)
-    # Income statement
     revenue = _safe_get(fin, "Total Revenue") or _safe_get(fin, "Revenue")
     gross_profit = _safe_get(fin, "Gross Profit")
     operating_income = _safe_get(fin, "Operating Income")
@@ -142,8 +186,6 @@ def _compute_fundamentals_from_statements(tk: yf.Ticker, info: dict) -> dict:
     net_income = _safe_get(fin, "Net Income")
     interest_expense = _safe_get(fin, "Interest Expense")
     ebit = _safe_get(fin, "EBIT") or operating_income
-
-    # Balance sheet
     total_assets = _safe_get(bs, "Total Assets")
     current_assets = _safe_get(bs, "Current Assets")
     cash = _safe_get(bs, "Cash And Cash Equivalents") or _safe_get(bs, "Cash")
@@ -152,92 +194,155 @@ def _compute_fundamentals_from_statements(tk: yf.Ticker, info: dict) -> dict:
     total_debt = _safe_get(bs, "Total Debt") or _safe_get(bs, "Long Term Debt")
     total_equity = _safe_get(bs, "Total Equity") or _safe_get(bs, "Stockholders Equity")
     current_liabilities = _safe_get(bs, "Current Liabilities")
-    short_term_debt = _safe_get(bs, "Short Term Debt") or _safe_get(bs, "Current Debt")
-
-    # Cash flow
     operating_cash_flow = _safe_get(cf, "Operating Cash Flow") or _safe_get(cf, "Cash Flow From Operations")
     capex = _safe_get(cf, "Capital Expenditure") or _safe_get(cf, "Capital Expenditures")
     free_cash_flow = operating_cash_flow - abs(capex) if operating_cash_flow and capex else None
-
-    # Market cap from info
     market_cap = info.get("marketCap")
 
-    # ── Computed metrics ──
-    # price_to_cash_flow
     if market_cap and operating_cash_flow and operating_cash_flow > 0:
         out["price_to_cash_flow"] = market_cap / operating_cash_flow
-
-    # ebitda_margin
     if revenue and ebitda and revenue > 0:
         out["ebitda_margin"] = (ebitda / revenue) * 100
-
-    # operating_leverage = % change in operating income / % change in revenue (simplified: contribution margin)
-    # Using gross margin as proxy for operating leverage
     if revenue and gross_profit and revenue > 0:
-        out["operating_leverage"] = gross_profit / revenue  # contribution margin ratio
-
-    # free_cash_flow_growth - need historical, skip for now
-    # out["free_cash_flow_growth"] = ...
-
-    # cash_ratio
+        out["operating_leverage"] = gross_profit / revenue
     if current_liabilities and cash and current_liabilities > 0:
         out["cash_ratio"] = cash / current_liabilities
-
-    # asset_turnover
     if total_assets and revenue and total_assets > 0:
         out["asset_turnover"] = revenue / total_assets
-
-    # inventory_turnover
     if inventory and revenue and inventory > 0:
         out["inventory_turnover"] = revenue / inventory
-
-    # receivables_turnover
     if receivables and revenue and receivables > 0:
         out["receivables_turnover"] = revenue / receivables
-
-    # debt_to_assets
     if total_assets and total_debt and total_assets > 0:
         out["debt_to_assets"] = total_debt / total_assets
-
-    # interest_coverage
     if ebit and interest_expense and interest_expense > 0:
         out["interest_coverage"] = ebit / interest_expense
-
-    # debt_to_ebitda
     if total_debt and ebitda and ebitda > 0:
         out["debt_to_ebitda"] = total_debt / ebitda
-
-    # dividend_growth_rate - need historical, skip
-    # out["dividend_growth_rate"] = ...
-
-    # free_cash_flow_yield
     if market_cap and free_cash_flow and market_cap > 0:
         out["free_cash_flow_yield"] = (free_cash_flow / market_cap) * 100
-
-    # operating_cash_flow_ratio
     if current_liabilities and operating_cash_flow and current_liabilities > 0:
         out["operating_cash_flow_ratio"] = operating_cash_flow / current_liabilities
-
-    # capex_ratio
     if operating_cash_flow and capex and operating_cash_flow > 0:
         out["capex_ratio"] = abs(capex) / operating_cash_flow
-
-    # cash_conversion_ratio
     if net_income and operating_cash_flow and net_income > 0:
         out["cash_conversion_ratio"] = operating_cash_flow / net_income
-
-    # roe_stability - need historical, skip
-    # out["roe_stability"] = ...
-
-    # earnings_quality - proxy: operating_cash_flow / net_income
-    if net_income and operating_cash_flow and net_income > 0:
         out["earnings_quality"] = operating_cash_flow / net_income
-
-    # price_to_sales (if not in info)
     if market_cap and revenue and market_cap > 0:
         out["price_to_sales"] = market_cap / revenue
-
     return out
+
+
+def _build_fundamental_snapshots(tk: yf.Ticker, info: dict, ohlcv: list[dict]) -> list[dict]:
+    """Build point-in-time quarterly snapshots from statements and earnings dates."""
+    try:
+        fin = tk.get_income_stmt(freq="quarterly")
+        bs = tk.get_balance_sheet(freq="quarterly")
+        cf = tk.get_cashflow(freq="quarterly")
+    except Exception:
+        return []
+    if fin is None or fin.empty or bs is None or bs.empty or cf is None or cf.empty:
+        return []
+
+    period_ends = sorted(pd.to_datetime(fin.columns), key=lambda value: pd.Timestamp(value))
+    releases = _release_map(tk, period_ends)
+    prices = {row["date"]: float(row["close"]) for row in ohlcv}
+    snapshots: list[dict] = []
+
+    for period_idx, period_end in enumerate(period_ends):
+        reported_at = releases.get(period_end.strftime("%Y-%m-%d"))
+        if not reported_at:
+            continue
+        effective_at = reported_at
+        fin_col = fin.columns[period_idx]
+        bs_col = bs.columns[min(period_idx, len(bs.columns) - 1)] if len(bs.columns) else None
+        cf_col = cf.columns[min(period_idx, len(cf.columns) - 1)] if len(cf.columns) else None
+        revenue = _safe_get(fin, "Total Revenue", period_idx) or _safe_get(fin, "Revenue", period_idx)
+        gross_profit = _safe_get(fin, "Gross Profit", period_idx)
+        operating_income = _safe_get(fin, "Operating Income", period_idx)
+        ebitda = _safe_get(fin, "EBITDA", period_idx) or _safe_get(fin, "Ebitda", period_idx)
+        net_income = _safe_get(fin, "Net Income", period_idx)
+        interest_expense = _safe_get(fin, "Interest Expense", period_idx)
+        ebit = _safe_get(fin, "EBIT", period_idx) or operating_income
+        total_assets = _safe_get(bs, "Total Assets", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        current_assets = _safe_get(bs, "Current Assets", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        cash = _safe_get(bs, "Cash And Cash Equivalents", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        inventory = _safe_get(bs, "Inventory", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        receivables = _safe_get(bs, "Accounts Receivable", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        total_debt = _safe_get(bs, "Total Debt", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        total_equity = _safe_get(bs, "Total Equity", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        current_liabilities = _safe_get(bs, "Current Liabilities", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        operating_cash_flow = _safe_get(cf, "Operating Cash Flow", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
+        capex = _safe_get(cf, "Capital Expenditure", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
+        dividends = _safe_get(cf, "CashDividendsPaid", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
+        free_cash_flow = operating_cash_flow - abs(capex) if operating_cash_flow and capex else None
+        close = next((prices[date] for date in sorted(prices) if date <= effective_at), None)
+        shares = _safe_get(bs, "OrdinarySharesNumber", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        market_cap = close * shares if close and shares else None
+        revenue_ttm = _ttm(fin, period_idx, "Total Revenue") or _ttm(fin, period_idx, "Revenue")
+        net_income_ttm = _ttm(fin, period_idx, "NetIncomeCommonStockholders") or _ttm(fin, period_idx, "NetIncome")
+        ebitda_ttm = _ttm(fin, period_idx, "EBITDA")
+        operating_income_ttm = _ttm(fin, period_idx, "OperatingIncome")
+        operating_cash_flow_ttm = _ttm(cf, period_idx, "OperatingCashFlow")
+        capex_ttm = _ttm(cf, period_idx, "CapitalExpenditure")
+        dividends_ttm = _ttm(cf, period_idx, "CashDividendsPaid")
+        prior_revenue = _ttm(fin, period_idx - 1, "Total Revenue") or _ttm(fin, period_idx - 1, "Revenue")
+        prior_net_income = _ttm(fin, period_idx - 1, "NetIncomeCommonStockholders") or _ttm(fin, period_idx - 1, "NetIncome")
+        prior_ocf = _ttm(cf, period_idx - 1, "OperatingCashFlow")
+
+        metrics: dict[str, float | None] = {
+            "pe_ratio": _statement_ratio(market_cap, net_income_ttm),
+            "pb_ratio": _statement_ratio(market_cap, total_equity),
+            "ev_ebitda": None,
+            "peg_ratio": None,
+            "price_to_sales": _statement_ratio(market_cap, revenue_ttm),
+            "price_to_cash_flow": _statement_ratio(market_cap, operating_cash_flow_ttm),
+            "payout_ratio": _statement_ratio(dividends_ttm, net_income_ttm, 100),
+            "roe": _statement_ratio(net_income_ttm, total_equity, 100),
+            "roa": _statement_ratio(net_income_ttm, total_assets, 100),
+            "roic": _statement_ratio(operating_income_ttm, total_equity + (total_debt or 0), 100),
+            "profit_margin": _statement_ratio(net_income_ttm, revenue_ttm, 100),
+            "gross_margin": _statement_ratio(gross_profit, revenue, 100),
+            "operating_margin": _statement_ratio(operating_income, revenue, 100),
+            "net_margin": _statement_ratio(net_income, revenue, 100),
+            "ebitda_margin": _statement_ratio(ebitda, revenue, 100),
+            "operating_leverage": None,
+            "revenue_growth": _growth(revenue_ttm, prior_revenue),
+            "eps_growth": _growth(net_income_ttm, prior_net_income),
+            "earnings_growth": _growth(net_income_ttm, prior_net_income),
+            "free_cash_flow_growth": _growth((operating_cash_flow_ttm or 0) - abs(capex_ttm or 0), (prior_ocf or 0) - abs(_ttm(cf, period_idx - 1, "CapitalExpenditure") or 0)),
+            "current_ratio": _statement_ratio(current_assets, current_liabilities),
+            "quick_ratio": _statement_ratio((current_assets or 0) - (inventory or 0), current_liabilities),
+            "cash_ratio": _statement_ratio(cash, current_liabilities),
+            "asset_turnover": _statement_ratio(revenue_ttm, total_assets),
+            "inventory_turnover": _statement_ratio(revenue_ttm, inventory),
+            "receivables_turnover": _statement_ratio(revenue_ttm, receivables),
+            "debt_to_equity": _statement_ratio(total_debt, total_equity, 100),
+            "debt_to_assets": _statement_ratio(total_debt, total_assets, 100),
+            "interest_coverage": _statement_ratio(ebit, interest_expense),
+            "debt_to_ebitda": _statement_ratio(total_debt, ebitda_ttm),
+            "dividend_yield": _statement_ratio(dividends_ttm, market_cap, 100),
+            "dividend_growth_rate": None,
+            "free_cash_flow_yield": _statement_ratio(free_cash_flow, market_cap, 100),
+            "operating_cash_flow_ratio": _statement_ratio(operating_cash_flow, current_liabilities, 100),
+            "capex_ratio": _statement_ratio(abs(capex) if capex is not None else None, operating_cash_flow, 100),
+            "cash_conversion_ratio": _statement_ratio(operating_cash_flow, net_income, 100),
+            "roe_stability": None,
+            "earnings_quality": _statement_ratio(operating_cash_flow, net_income, 100),
+            "financial_leverage": _statement_ratio(total_assets, total_equity),
+            "earnings_stability": None,
+            "dividend_stability": None,
+            "accounting_quality": _statement_ratio((net_income or 0) - (operating_cash_flow or 0), total_assets, 100),
+        }
+        snapshots.append({
+            "reported_at": reported_at,
+            "fiscal_period_end": period_end.strftime("%Y-%m-%d"),
+            "effective_at": effective_at,
+            "source": "yfinance quarterly statements + earnings_dates",
+            "metrics": metrics,
+        })
+    return snapshots
+
 
 def fetch_ticker_data(tickers: list[str], start: str, end: str) -> dict:
     """Fetch OHLCV + fundamentals for all tickers."""
@@ -256,14 +361,29 @@ def fetch_ticker_data(tickers: list[str], start: str, end: str) -> dict:
     )
     # Fetch fundamentals (info + financial statements) per ticker
     infos = {}
+    rows_by_ticker = {}
     for i, t in enumerate(tickers):
+        try:
+            if t in ohlcv.columns.get_level_values(0):
+                ticker_frame = ohlcv[t].dropna(subset=["Close"]).copy()
+                rows_by_ticker[t] = [
+                    {
+                        "date": date.strftime("%Y-%m-%d"),
+                        "open": float(row["Open"]),
+                        "high": float(row["High"]),
+                        "low": float(row["Low"]),
+                        "close": float(row["Close"]),
+                        "volume": float(row["Volume"]),
+                    }
+                    for date, row in ticker_frame.iterrows()
+                ]
+        except Exception:
+            rows_by_ticker[t] = []
         for attempt in range(3):
             try:
                 tk = yf.Ticker(t)
                 info = tk.info
-                # Compute additional metrics from financial statements
                 computed = _compute_fundamentals_from_statements(tk, info)
-                # Merge info with computed metrics
                 merged = {
                     "sector": info.get("sector"),
                     "industry": info.get("industry"),
@@ -309,8 +429,12 @@ def fetch_ticker_data(tickers: list[str], start: str, end: str) -> dict:
                     "receivablesTurnover": computed.get("receivables_turnover"),
                     "debtToAssets": computed.get("debt_to_assets"),
                 }
-                infos[t] = merged
-                print(f"  [{i+1}/{len(tickers)}] {t}: sector={merged.get('sector')}, mcap={(merged.get('marketCap') or 0)/1e9:.1f}B, computed={len([k for k,v in merged.items() if v is not None])} metrics")
+                infos[t] = {
+                    "info": merged,
+                    "info_effective_at": end,
+                    "fundamental_history": _build_fundamental_snapshots(tk, info, rows_by_ticker.get(t, [])),
+                }
+                print(f"  [{i+1}/{len(tickers)}] {t}: sector={merged.get('sector')}, mcap={(merged.get('marketCap') or 0)/1e9:.1f}B, snapshots={len(infos[t]['fundamental_history'])}")
                 break
             except Exception as e:
                 if attempt == 2:
@@ -319,7 +443,7 @@ def fetch_ticker_data(tickers: list[str], start: str, end: str) -> dict:
                 else:
                     time.sleep(1)
         time.sleep(0.15)  # be polite
-    return {"ohlcv": ohlcv, "infos": infos}
+    return {"ohlcv": ohlcv, "infos": infos, "rows_by_ticker": rows_by_ticker}
 
 def main():
     # Fetch ~2.5 years of history so we have enough for SMA-200 + forward returns
@@ -338,35 +462,23 @@ def main():
     tk_data = fetch_ticker_data(tickers, start, end)
     ohlcv = tk_data["ohlcv"]
     infos = tk_data["infos"]
+    rows_by_ticker = tk_data["rows_by_ticker"]
 
     # Serialize OHLCV per ticker to JSON-friendly structure
     print("\n--- Serializing OHLCV ---")
     per_ticker = {}
     for t in tickers:
-        try:
-            if t in ohlcv.columns.get_level_values(0):
-                df = ohlcv[t].dropna(subset=["Close"]).copy()
-            else:
-                continue
-        except Exception:
+        rows = rows_by_ticker.get(t, [])
+        if not rows:
             continue
-        if df.empty:
-            continue
-        rows = []
-        for date, row in df.iterrows():
-            rows.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
-                "volume": float(row["Volume"]),
-            })
+        ticker_info = infos.get(t, {})
         per_ticker[t] = {
             "ohlcv": rows,
-            "info": infos.get(t, {}),
+            "info": ticker_info.get("info", {}),
+            "info_effective_at": ticker_info.get("info_effective_at"),
+            "fundamental_history": ticker_info.get("fundamental_history", []),
         }
-        print(f"  {t}: {len(rows)} bars, last close={rows[-1]['close']:.2f}")
+        print(f"  {t}: {len(rows)} bars, last close={rows[-1]['close']:.2f}, snapshots={len(per_ticker[t]['fundamental_history'])}")
 
     # Filter to tickers that actually have data
     valid_tickers = sorted(per_ticker.keys())
@@ -389,7 +501,8 @@ def main():
     print(f"Saved {size_mb:.1f} MB to {OUT_FILE}")
     print(f"  - {len(valid_tickers)} tickers with real OHLCV")
     print(f"  - {len(macro)} macro indicators from FRED")
-    print(f"  - Real fundamentals for {sum(1 for t in valid_tickers if per_ticker[t].get('info',{}).get('sector'))} tickers")
+    print(f"  - Real fundamentals for {sum(1 for t in valid_tickers if per_ticker[t].get('info', {}).get('sector'))} tickers")
+    print(f"  - Point-in-time fundamental snapshots for {sum(1 for t in valid_tickers if per_ticker[t].get('fundamental_history'))} tickers")
 
 if __name__ == "__main__":
     main()

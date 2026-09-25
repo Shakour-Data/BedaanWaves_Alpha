@@ -23,7 +23,11 @@ async function initFinBERT(): Promise<void> {
         return;
       }
       const { pipeline } = transformers;
-      finbertPipeline = await pipeline("text-classification", "ProsusAI/finbert", {
+      // Use Xenova/finbert — an ONNX-converted version of ProsusAI/finbert
+      // purpose-built for @xenova/transformers (Transformers.js). The original
+      // ProsusAI/finbert is a PyTorch checkpoint and returns 403 from the JS
+      // runtime, which previously silently fell back to keyword sentiment.
+      finbertPipeline = await pipeline("text-classification", "Xenova/finbert", {
         quantized: true,
       });
       finbertAvailable = true;
