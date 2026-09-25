@@ -3,7 +3,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
-import { learnCoefficients, loadCoefficients, computeOosMetrics, pearson } from "@/lib/scoring/learner";
+import { learnCoefficients, loadCoefficients, computeOosMetrics, pearson, type TrainingSample } from "@/lib/scoring/learner";
 
 const tmpDir = ".kilo/test-coef";
 
@@ -117,5 +117,61 @@ describe("learner.ts adapter", async () => {
     assert.ok(bundle);
     const dimSum = Object.values(bundle!.dimensions).reduce((a, b) => a + b, 0);
     assert.ok(Math.abs(dimSum - 1.0) < 1e-6);
+  });
+
+  // ─── Regression: zero-variance sentiment sub-aspects must NOT all be equal ──
+  // When sentiment metrics have no temporal variance (e.g. all default to 50.0
+  // because no news data), the TS learner should still produce differentiated,
+  // non-zero weights — not uniform 1/n values, and not zero.
+  test("zero-variance sentiment sub-aspects produce differentiated non-zero weights", () => {
+    const sentKeys = ["news_sentiment_avg", "news_volume", "social_sentiment", "social_volume", "analyst_rating", "target_price_change"];
+    const dimScores = { fundamental: 50, technical: 50, sentiment: 50, risk: 50, macro: 50, ai: 50 };
+    // All sentiment sub-aspects are constant at 50.0 (zero variance)
+    const constSubAspect: Record<string, number> = {};
+    for (const k of sentKeys) constSubAspect[k] = 50;
+    // Add a few non-sentiment sub-aspects with variance
+    constSubAspect["pe_ratio"] = 60;
+    constSubAspect["pe_ratio__rolling_mean"] = 58;
+    constSubAspect["rsi_14"] = 55;
+
+    const samples: TrainingSample[] = [];
+    for (let i = 0; i < 60; i++) {
+      samples.push({
+        subAspectScores: { ...constSubAspect, rsi_14: 55 + i * 0.1 },
+        dimensionScores: dimScores,
+        forwardReturn: (i % 5) - 2,
+      });
+    }
+
+    const learned = learnCoefficients("TEST", samples);
+    const saWeights = learned.sub_aspects;
+
+    // All sentiment sub-aspects should be present and non-zero
+    for (const k of sentKeys) {
+      assert.ok(saWeights[k] > 0, `Sentiment sub-aspect '${k}' weight should be > 0, got ${saWeights[k]}`);
+    }
+
+    // Sentiment sub-aspects should NOT all be equal (hash-based differentiation)
+    const sentVals = sentKeys.map((k) => saWeights[k]);
+    const allEqual = sentVals.every((v) => Math.abs(v - sentVals[0]) < 1e-12);
+    assert.ok(!allEqual, `Sentiment sub-aspect weights should NOT all be equal, got: ${JSON.stringify(sentVals)}`);
+  });
+
+  // ─── Regression: zero-variance sentiment dimension must produce non-zero weight ─
+  test("zero-variance sentiment dimension produces non-zero weight", () => {
+    const dimScores = { fundamental: 60, technical: 55, sentiment: 50, risk: 45, macro: 50, ai: 50 };
+    const samples: TrainingSample[] = [];
+    for (let i = 0; i < 60; i++) {
+      // sentiment always 50 (zero variance), others vary slightly
+      samples.push({
+        subAspectScores: { rsi_14: 50 + i, pe_ratio: 50 + i * 0.5 },
+        dimensionScores: { ...dimScores, fundamental: 60 + i * 0.1, technical: 55 + i * 0.05 },
+        forwardReturn: i % 3,
+      });
+    }
+
+    const learned = learnCoefficients("TEST2", samples);
+    assert.ok(learned.dimensions["sentiment"] > 0,
+      `Sentiment dimension weight should be > 0, got ${learned.dimensions["sentiment"]}`);
   });
 });

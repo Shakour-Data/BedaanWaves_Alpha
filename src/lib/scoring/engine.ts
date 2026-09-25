@@ -69,8 +69,8 @@ export function getDynamicWeights(
     return METRIC_UNIVERSE.map((m) => m.subAspect);
   })();
 
-  // Support both CoefficientBundle (.weights nested) and flat weights records
-  // (weights spread directly on the object with a `level` key, as passed from scoreMarket).
+  // Extract weights from the bundle. With proper CoefficientBundle construction
+  // (scoreMarket passes { weights, level, coldStart }), bundle.weights is used.
   // Strip non-numeric metadata keys (e.g. `level`) before validation —
   // isValidCoefficients rejects any entry whose value is not a finite number.
   const raw = (bundle as any)?.weights ?? (bundle as any);
@@ -206,7 +206,13 @@ const SENTIMENT_DIM = "sentiment";
       aspectsByParent.get(key)!.push(spec.subAspect);
     }
     const l4Weights = coeffs?.sub_aspects ?? null;
-    const l4Lookup = getDynamicWeights(ticker, "sub_aspects", l4Weights ? { ...l4Weights, level: "sub_aspects" } as CoefficientBundle : null);
+    const l4Bundle: CoefficientBundle | null = l4Weights
+      ? { weights: l4Weights, level: "sub_aspects", coldStart: false,
+          ticker, trainedAt: "", sampleCount: 0, version: coeffs?.version ?? "unknown",
+          dataHash: "", driftStatus: "OK", oosR2: null, oosIc: null,
+          shapTopKeys: null, regime: "calm" }
+      : null;
+    const l4Lookup = getDynamicWeights(ticker, "sub_aspects", l4Bundle);
     for (const [aspectKey, childSubs] of aspectsByParent) {
       const w = childSubs.map((sa) => l4Lookup.weights[sa] ?? 1 / childSubs.length);
       l3[aspectKey] = coverageWeightedMean(
@@ -219,7 +225,13 @@ const SENTIMENT_DIM = "sentiment";
     // aspect weights (each aspect gets its own weight → aspect coefficients matter).
     const l2: Record<string, number> = {};
     const l3Weights = coeffs?.aspects ?? null;
-    const l3Lookup = getDynamicWeights(ticker, "aspects", l3Weights ? { ...l3Weights, level: "aspects" } as CoefficientBundle : null);
+    const l3Bundle: CoefficientBundle | null = l3Weights
+      ? { weights: l3Weights, level: "aspects", coldStart: false,
+          ticker, trainedAt: "", sampleCount: 0, version: coeffs?.version ?? "unknown",
+          dataHash: "", driftStatus: "OK", oosR2: null, oosIc: null,
+          shapTopKeys: null, regime: "calm" }
+      : null;
+    const l3Lookup = getDynamicWeights(ticker, "aspects", l3Bundle);
     for (const dim of DIMENSION_KEYS) {
       for (const sd of SUB_DIMENSIONS[dim]) {
         const key = `${dim}/${sd}`;
@@ -242,7 +254,13 @@ const SENTIMENT_DIM = "sentiment";
     // sub-dimension weights (each sub-dim gets its own weight → sub_dim coeffs matter).
     const l1: Record<DimensionKey, number> = {} as Record<DimensionKey, number>;
     const l2Weights = coeffs?.sub_dimensions ?? null;
-    const l2Lookup = getDynamicWeights(ticker, "sub_dimensions", l2Weights ? { ...l2Weights, level: "sub_dimensions" } as CoefficientBundle : null);
+    const l2Bundle: CoefficientBundle | null = l2Weights
+      ? { weights: l2Weights, level: "sub_dimensions", coldStart: false,
+          ticker, trainedAt: "", sampleCount: 0, version: coeffs?.version ?? "unknown",
+          dataHash: "", driftStatus: "OK", oosR2: null, oosIc: null,
+          shapTopKeys: null, regime: "calm" }
+      : null;
+    const l2Lookup = getDynamicWeights(ticker, "sub_dimensions", l2Bundle);
     for (const dim of DIMENSION_KEYS) {
       const childKeys = SUB_DIMENSIONS[dim].map((sd) => `${dim}/${sd}`);
       const w = childKeys.map((k) => l2Lookup.weights[k] ?? 1 / childKeys.length);
@@ -255,7 +273,13 @@ const SENTIMENT_DIM = "sentiment";
     // Step 7 — overall: Σ dim·w / Σ w  (per-symbol dynamic, uses dimension weights)
     const dimValues = DIMENSION_KEYS.map((d) => l1[d]);
     const l1Weights = coeffs?.dimensions ?? null;
-    const l1Lookup = getDynamicWeights(ticker, "dimensions", l1Weights ? { ...l1Weights, level: "dimensions" } as CoefficientBundle : null);
+    const l1Bundle: CoefficientBundle | null = l1Weights
+      ? { weights: l1Weights, level: "dimensions", coldStart: false,
+          ticker, trainedAt: "", sampleCount: 0, version: coeffs?.version ?? "unknown",
+          dataHash: "", driftStatus: "OK", oosR2: null, oosIc: null,
+          shapTopKeys: null, regime: "calm" }
+      : null;
+    const l1Lookup = getDynamicWeights(ticker, "dimensions", l1Bundle);
     const dimW = DIMENSION_KEYS.map((d) => l1Lookup.weights[d]);
     let overall = 0;
     let wsum = 0;

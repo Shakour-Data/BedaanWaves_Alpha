@@ -286,3 +286,33 @@ tests/python/
 /tmp_*.py
 /tmp_*.json
 tmp_baseline_store/
+/check-105.ts
+/check-news.ts
+/check_bars.py
+/check_db.ts
+/check_db2.ts
+/check_db3.ts
+/check_dups.ts
+/check_overlap.ts
+/check_state.ts
+/check_state2.ts
+/compare_symbols.py
+/debug_seed.ts
+/get-symbols.ts
+/run_seed.ts
+/scripts/verify-symbols.ts
+/scripts/fetch_new_tickers.py
+/scripts/news/
+/test-upsert.ts
+/test_upsert.ts
+/tests/check-sources.py
+/verify-data.cjs
+
+# Public assets (generated or static, track if needed)
+!public/apple-touch-icon.png
+!public/favicon.ico
+
+# Scripts TypeScript config
+tsconfig.scripts.json
+
+.vercel

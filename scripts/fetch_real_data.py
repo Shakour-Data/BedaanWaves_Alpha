@@ -33,6 +33,10 @@ NASDAQ_TICKERS = [
     "ARM","DASH","DDOG","SNOW","NET","MDB","OKTA","PINS","RIVN","COIN","PLTR","SHOP","ZM","DOCU",
     # ETFs for market context
     "QQQ","QQQM","SPY","SMH","XLK","IBB","TLT","GLD","USO",
+    # Financials / Utilities / Telecom / Pharma (added for full coverage)
+    "BAC","PCG","T","PFE","NOK","NU","BB",
+    # Block, Inc. (formerly SQ, ticker changed to XYZ on Jan 21, 2025)
+    "XYZ",
 ]
 
 # FRED macro indicators -> db_field mapping

@@ -7,15 +7,15 @@
 // Per spec §1.3: corporate-action adjusted (yfinance auto_adjust=true).
 
 import { db } from "@/lib/db";
-import { readFileSync } from "fs";
-import { join } from "path";
 import { execFileSync } from "child_process";
+import { join } from "path";
 import { SEED_TICKERS_DEDUP } from "./universe";
 import {
   loadRealUniverse,
+  loadRealData,
   computeMarketReturns,
   generateRealDay,
-  type RealTickerWalk,
+  RealTickerWalk,
 } from "./real-data";
 import { scoreMarket, type CoefficientLookup } from "../engine";
 import {
@@ -27,6 +27,8 @@ import {
 import { METRIC_UNIVERSE } from "../metric-universe";
 import { computeDataQuality } from "../queries";
 import { loadAIModels, type AIInferenceResult } from "../ai-inference";
+import { ensureNewsData, storeNewsArticles, resetValidDbTickersCache } from "@/lib/news/ingestion";
+import type { NewsArticle } from "@/lib/news/types";
 
 const SCORING_DAYS = 60; // last 60 trading days (~3mo) for scoring + training
 // Need ≥55 samples (60 - 5 forward days) to exceed MIN_SAMPLES=50 and ensure
@@ -128,26 +130,11 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
     ? Math.max(0, Math.floor(options.limit as number))
     : 0;
 
+  // Check if we already have seed data (and not forcing a re-seed)
   const snapshotCount = await db.scoreSnapshot.count();
   const hasSeedData = !force && snapshotCount > 0;
-  if (hasSeedData && !incremental) {
-    const [symbols, coefficients, news, trainingRuns] = await Promise.all([
-      db.symbol.count(),
-      db.coefficient.count(),
-      db.newsItem.count(),
-      db.trainingRun.count(),
-    ]);
-    return {
-      symbols,
-      snapshots: snapshotCount,
-      coefficients,
-      news,
-      trainingRuns,
-      realDataPoints: 0,
-      elapsedMs: Date.now() - t0,
-    };
-  }
 
+  // If force mode, delete existing data BEFORE checking hasSeedData
   if (force && !incremental) {
     console.log("[seed] FORCE mode: existing seed data will be deleted");
     await db.newsItemSymbol.deleteMany();
@@ -159,66 +146,235 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
     await db.coefficient.deleteMany();
     await db.scoreSnapshot.deleteMany();
     await db.marketBar.deleteMany();
-    await db.symbol.deleteMany();
+     await db.symbol.deleteMany();
+     // Reset the ticker cache so getValidDbTickers re-queries after force delete
+     resetValidDbTickersCache();
+   }
+
+  if (hasSeedData && !incremental) {
+    const [symbols, coefficients, newsCountExisting, trainingRuns] = await Promise.all([
+      db.symbol.count(),
+      db.coefficient.count(),
+      db.newsItem.count(),
+      db.trainingRun.count(),
+    ]);
+
+    // Always ensure curated news from real-news-data.json is in the database
+    // (storeNewsArticles is idempotent — it skips duplicates by headline+source+publishedAt).
+    // This must run even when SEC EDGAR/external news already exists, because
+    // those articles have duller headlines and the curated JSON data is preferred
+    // for the NewsRibbon marquee.
+    let finalNewsCount = newsCountExisting;
+    try {
+      const realData = loadRealData();
+      if (realData.news.length > 0) {
+        const newsArticles: NewsArticle[] = realData.news.map((n) => ({
+          headline: n.headline,
+          source: n.source,
+          url: n.url ?? "",
+          publishedAt: new Date(n.publishedAt),
+          sentiment: n.sentiment as NewsArticle["sentiment"],
+          severity: n.severity as NewsArticle["severity"],
+          tickers: n.tickers,
+        }));
+        const { stored } = await storeNewsArticles(newsArticles);
+        finalNewsCount = newsCountExisting + stored;
+        if (stored > 0) {
+          console.log(`[seed] Stored ${stored} news articles from real-news-data.json (early-return path)`);
+        }
+      }
+    } catch (err) {
+      console.error("[seed] Failed to load real-news-data.json in early-return path:", err instanceof Error ? err.message : err);
+    }
+
+    return {
+      symbols,
+      snapshots: snapshotCount,
+      coefficients,
+      news: finalNewsCount,
+      trainingRuns,
+      realDataPoints: 0,
+      elapsedMs: Date.now() - t0,
+    };
   }
 
-  if (incremental && hasSeedData) {
+  if (incremental && snapshotCount > 0) {
     console.log("[seed] INCREMENTAL mode: scoring only the latest day");
   }
 
+  // Ensure ALL NASDAQ seed tickers exist in database (5,600 symbols)
+  // Upsert all seed tickers so news can link to them even without market data.
+  // Skip the full upsert loop when we already have seed data — it is expensive
+  // (5,600 individual DB writes) and only needs to run once.
+  if (!hasSeedData || incremental) {
+    console.log("[seed] Ensuring all NASDAQ seed tickers exist in database...");
+    const seedTickerData = SEED_TICKERS_DEDUP.map((s) => ({
+      ticker: s.ticker,
+      name: s.name,
+      sector: s.sector,
+      industry: s.industry,
+      marketCap: s.marketCap ?? 0,
+      isEtf: s.isEtf ?? false,
+    }));
+
+    // Use createMany (batched) instead of per-row upserts. A single round-trip
+    // per 1000-row chunk is ~1000x faster than 5,600 sequential upserts (~48ms
+    // each → 4.5min vs ~1s). In force mode the symbols were already deleted, so
+    // there are no conflicts; in incremental mode, skip existing tickers first.
+    const existingTickers = incremental
+      ? new Set(
+          (
+            await db.symbol.findMany({ select: { ticker: true } })
+          ).map((s) => s.ticker),
+        )
+      : new Set<string>();
+
+    const toCreate = seedTickerData.filter(
+      (s) => !existingTickers.has(s.ticker),
+    );
+
+    const CREATE_CHUNK = 1000;
+    for (let i = 0; i < toCreate.length; i += CREATE_CHUNK) {
+      const chunk = toCreate.slice(i, i + CREATE_CHUNK);
+      try {
+        await db.symbol.createMany({ data: chunk } as any);
+      } catch {
+        // createMany fails atomically on any duplicate, so fall back to
+        // per-row upserts for this chunk to guarantee all rows land.
+        for (const sym of chunk) {
+          try {
+            await db.symbol.upsert({
+              where: { ticker: sym.ticker },
+              update: sym,
+              create: sym,
+            });
+          } catch {
+            // ignore individual row errors
+          }
+        }
+      }
+    }
+
+    // Update any existing tickers whose fields may have changed
+    const toUpdate = seedTickerData.filter((s) => existingTickers.has(s.ticker));
+    for (const sym of toUpdate) {
+      await db.symbol.update({
+        where: { ticker: sym.ticker },
+        data: sym,
+      });
+    }
+    console.log(`[seed] Ensured ${seedTickerData.length} NASDAQ seed tickers in database`);
+  }
+
+  // Store news from real-news-data.json early — before the loadRealUniverse()
+  // null check — so that NewsRibbon always has data even when market data
+  // files are missing or insufficient.
+  try {
+    const realData = loadRealData();
+    if (realData.news.length > 0) {
+      const newsArticles: NewsArticle[] = realData.news.map((n) => ({
+        headline: n.headline,
+        source: n.source,
+        url: n.url ?? "",
+        publishedAt: new Date(n.publishedAt),
+        sentiment: n.sentiment as NewsArticle["sentiment"],
+        severity: n.severity as NewsArticle["severity"],
+        tickers: n.tickers,
+      }));
+      const { stored } = await storeNewsArticles(newsArticles);
+      console.log(`[seed] Stored ${stored} news articles from real-news-data.json`);
+    }
+  } catch (err) {
+    console.error("[seed] Failed to store real-news-data.json:", err instanceof Error ? err.message : err);
+  }
+
+  // Load real market data from JSON — only when we actually need to seed
   const fullUniverse = loadRealUniverse();
   if (!fullUniverse) {
-    // TypeScript doesn't narrow after throw, so return explicit error result
+    const [symbolCount, newsCount] = await Promise.all([
+      db.symbol.count(),
+      db.newsItem.count(),
+    ]);
     return {
-      symbols: 0,
-      snapshots: 0,
+      symbols: symbolCount,
+      snapshots: snapshotCount,
       coefficients: 0,
-      news: 0,
+      news: newsCount,
       trainingRuns: 0,
       realDataPoints: 0,
       elapsedMs: Date.now() - t0,
     };
   }
 
+  // Load authoritative symbol list from database
+  const dbSymbols = await db.symbol.findMany({
+    select: { ticker: true, name: true, sector: true, industry: true, marketCap: true, isEtf: true },
+    orderBy: { ticker: "asc" },
+  });
+  const dbTickers = dbSymbols.map((s) => s.ticker);
+  console.log(`[seed] Loaded ${dbTickers.length} symbols from database`);
+
+  // Build universe with ALL dbTickers, using real data where available
   const marketReturns = computeMarketReturns(fullUniverse);
-  const requestedTickers = hasExplicitLimit
-    ? fullUniverse.tickers.slice(offset, offset + limit)
-    : fullUniverse.tickers.slice(offset);
-  const selectedTickers: string[] = [];
-  const skippedTickers: string[] = [];
-  for (const ticker of requestedTickers) {
-    if (fullUniverse.walks.has(ticker)) {
-      selectedTickers.push(ticker);
+
+  // Determine which tickers have sufficient real data (>= 50 bars)
+  const MIN_BARS = 50;
+  const tickersWithRealData: string[] = [];
+  const tickersWithoutRealData: string[] = [];
+
+  for (const ticker of dbTickers) {
+    const walk = fullUniverse.walks.get(ticker);
+    if (walk && walk.ohlcv.length >= MIN_BARS) {
+      tickersWithRealData.push(ticker);
     } else {
-      skippedTickers.push(ticker);
+      tickersWithoutRealData.push(ticker);
     }
   }
 
+  console.log(`[seed] Tickers with real data (>=${MIN_BARS} bars): ${tickersWithRealData.length}`);
+  console.log(`[seed] Tickers without sufficient real data: ${tickersWithoutRealData.length}`);
+
+  // Use the fullUniverse's trading days (intersection of dates for tickers with real data)
+  const tradingDays = fullUniverse.tradingDays;
+  const walks = fullUniverse.walks;
+  const macro = fullUniverse.macro;
+  const news = fullUniverse.news;
+
+  // For tickers without real data, create minimal walks with sector/industry from DB
+  for (const ticker of tickersWithoutRealData) {
+    const dbSymbol = dbSymbols.find((s) => s.ticker === ticker);
+    if (dbSymbol && !walks.has(ticker)) {
+      // Create a minimal walk with empty OHLCV (will get neutral scores)
+      walks.set(ticker, new RealTickerWalk(ticker, {
+        ohlcv: [],
+        info: {
+          sector: dbSymbol.sector,
+          industry: dbSymbol.industry,
+          marketCap: dbSymbol.marketCap ?? 0,
+          beta: 1,
+        },
+      }));
+    }
+  }
+
+  // Universe includes ALL dbTickers for registration, but only tickers
+  // with real OHLCV data (>= MIN_BARS) get scored. The remaining tickers
+  // are registered in the DB but have no score snapshots (they'll show
+  // "NO_DATA" in the rankings UI).
+  const scoredTickers = tickersWithRealData;
   const universe = {
-    ...fullUniverse,
-    tickers: selectedTickers,
-    walks: new Map(
-      selectedTickers.map((ticker) => [
-        ticker,
-        fullUniverse.walks.get(ticker) as RealTickerWalk,
-      ])
-    ),
+    tickers: scoredTickers,
+    walks,
+    tradingDays,
+    macro,
+    news,
   };
 
   console.log(
-    `[seed] Batch offset=${offset} limit=${hasExplicitLimit ? limit : "all"} selected=${selectedTickers.length}`
+    `[seed] Universe ready: ${universe.tickers.length} scored tickers, ${tradingDays.length} scoring days, ${dbTickers.length} total registered symbols`
   );
-  if (skippedTickers.length > 0) {
-    console.log(`[seed] Skipped ${skippedTickers.length} tickers without walk data`);
-  }
-  console.log(
-    `[seed] Loaded ${fullUniverse.tickers.length} real tickers, ${fullUniverse.tradingDays.length} scoring days`
-  );
-  if (hasExplicitLimit) {
-    console.log("[seed] Note: batch scores are normalized within the selected batch");
-  }
 
-  if (selectedTickers.length === 0) {
+  if (universe.tickers.length === 0) {
     return {
       symbols: 0,
       snapshots: 0,
@@ -230,26 +386,35 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
     };
   }
 
-  // 2. Persist universe (using real sector/industry/marketCap from yfinance)
+  // 2. Persist universe (using sector/industry/marketCap from database)
+  // Symbols already exist in DB from earlier load; update if needed
   const symbolRows = universe.tickers.map((t) => {
-    const walk = universe.walks.get(t) as RealTickerWalk;
+    const dbSymbol = dbSymbols.find((s) => s.ticker === t);
+    const walk = universe.walks.get(t);
     return {
       ticker: t,
-      name: SEED_MAP.get(t) ?? t,
+      name: dbSymbol?.name ?? SEED_MAP.get(t) ?? t,
       exchange: "NASDAQ",
-      sector: walk.sector,
-      industry: walk.industry,
-      marketCap: walk.marketCap,
-      isEtf: walk.isEtf,
+      sector: dbSymbol?.sector ?? walk?.sector ?? "Unknown",
+      industry: dbSymbol?.industry ?? walk?.industry ?? "Unknown",
+      marketCap: dbSymbol?.marketCap ?? walk?.marketCap ?? 0,
+      isEtf: dbSymbol?.isEtf ?? walk?.isEtf ?? false,
       dataQuality: "INSUFFICIENT",
     };
   });
   try {
     if (!incremental) {
-      await db.symbol.createMany({ data: symbolRows });
+      // Upsert: update existing, insert new
+      for (const row of symbolRows) {
+        await db.symbol.upsert({
+          where: { ticker: row.ticker },
+          update: row,
+          create: row,
+        });
+      }
     }
   } catch {
-    // Ignore duplicates (incremental mode re-uses existing symbols)
+    // Ignore duplicates
   }
 
   // 2b. Persist MarketBar data — skip in incremental mode (already exists)
@@ -300,12 +465,15 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
         close: Number.isFinite(bar.close) ? bar.close : 0,
         volume: Number.isFinite(bar.volume) ? bar.volume : 0,
       }));
-      for (let i = 0; i < sanitizedBars.length; i += 1000) {
-        const batch = sanitizedBars.slice(i, i + 1000);
-        await db.marketBar.createMany({ data: batch } as any);
+      // Force mode already deleted all rows, so a plain batched createMany is
+      // safe and ~1000x faster than per-row upserts (~48ms each → 48K rows ≈ 38min).
+      const BAR_CHUNK = 1000;
+      for (let i = 0; i < sanitizedBars.length; i += BAR_CHUNK) {
+        const chunk = sanitizedBars.slice(i, i + BAR_CHUNK);
+        await db.marketBar.createMany({ data: chunk } as any);
       }
     } catch (e) {
-      console.warn("[seed] MarketBar insert failed (may already exist):", e);
+      console.warn("[seed] MarketBar insert failed:", e instanceof Error ? e.message : e);
     }
   }
 
@@ -338,12 +506,12 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
   const scoringDays = Math.min(incremental ? 1 : SCORING_DAYS, universe.tradingDays.length);
   console.log(`[seed] Scoring ${scoringDays} day(s) for batch symbols`);
 
-  // Score the LAST `scoringDays` dates (most recent), not the first.
-  // universe.tradingDays is already the last 90 dates (from loadRealUniverse),
-  // so we score the tail: tradingDays[ tradingDays.length - scoringDays .. end ]
+// Score the LAST `scoringDays` dates (most recent), not the first.
+// universe.tradingDays is already the last 90 dates (from loadRealUniverse),
+// so we score the tail: tradingDays[ tradingDays.length - scoringDays .. end ]
   const dayOffset = universe.tradingDays.length - scoringDays;
   for (let i = 0; i < scoringDays; i++) {
-    const day = generateRealDay(universe, dayOffset + i, marketReturns);
+    const day = await generateRealDay(universe, dayOffset + i, marketReturns);
     const capturedAt = new Date(day.date + "T22:00:00.000Z").toISOString();
 
     // Build coefficient lookup from current training state (per-symbol, walk-forward)
@@ -852,8 +1020,8 @@ macroSensitivities[ticker] = betas;
     console.warn("[seed] ScoreSnapshot insert failed:", e);
   }
 
-  // 8. Update symbol processingStatus and dataQuality based on training outcome
-  const scoredTickers = universe.tickers.filter((t) => (trainingSamplesByTicker[t]?.length ?? 0) >= 50);
+// 8. Update symbol processingStatus and dataQuality based on training outcome
+  const trainedTickers = universe.tickers.filter((t) => (trainingSamplesByTicker[t]?.length ?? 0) >= 50);
   const coldStartTickers = universe.tickers.filter((t) => (trainingSamplesByTicker[t]?.length ?? 0) < 50);
 
   // Resolve latest dataQuality per ticker from the snapshots just written.
@@ -865,9 +1033,9 @@ macroSensitivities[ticker] = betas;
     latestSnapDQ.set(snap.ticker, snap.dataQuality);
   }
 
-  if (scoredTickers.length > 0) {
+  if (trainedTickers.length > 0) {
     await db.symbol.updateMany({
-      where: { ticker: { in: scoredTickers } },
+      where: { ticker: { in: trainedTickers } },
       data: {
         processingStatus: "COEFFICIENTS_TRAINED",
         nextRetrainAt: new Date(now.getTime() + RETRAIN_CALENDAR_DAYS * 86_400_000),
@@ -898,62 +1066,44 @@ macroSensitivities[ticker] = betas;
     }
   }
 
-  // 9. News items (real recent market headlines)
-  const news = generateRealNews(universe.tradingDays);
-  const selectedTickerSet = new Set(universe.tickers);
-  const existingNews = await db.newsItem.findMany({
-    select: { id: true, headline: true, source: true, publishedAt: true },
-  });
-  const existingNewsByKey = new Map(
-    existingNews.map((item) => [
-      `${item.headline}\u0000${item.source}\u0000${item.publishedAt.toISOString()}`,
-      item.id,
-    ])
-  );
+  // 9. News items — store curated real news from real-news-data.json, then
+  // attempt to fetch fresh news from external APIs. Both are best-effort:
+  // failures must not break the seed pipeline or leave the app in a broken state.
   let newsCount = 0;
-  const existingNewsSymbolPairs = new Set(
-    (
-      await db.newsItemSymbol.findMany({
-        select: { newsItemId: true, ticker: true },
-      })
-    ).map((p) => `${p.newsItemId}:${p.ticker}`)
-  );
-  for (const n of news) {
-    const relatedTickers = n.tickers.filter((ticker) => selectedTickerSet.has(ticker));
-    if (relatedTickers.length === 0) continue;
-    const newsKey = `${n.headline}\u0000${n.source}\u0000${n.publishedAt.toISOString()}`;
-    let newsItemId = existingNewsByKey.get(newsKey);
-    if (!newsItemId) {
-      newsItemId = `news-${hashStr(newsKey).toString(16)}`;
-      await db.newsItem.create({
-        data: {
-          id: newsItemId,
-          headline: n.headline,
-          source: n.source,
-          url: n.url,
-          publishedAt: n.publishedAt,
-          sentiment: n.sentiment,
-          severity: n.severity,
+  try {
+    // Store pre-fetched real news from real-news-data.json into the database
+    // so the news ribbon (NewsRibbon) has data even if external API fetches fail.
+    if (news.length > 0) {
+      const newsArticles: NewsArticle[] = news.map((n) => ({
+        headline: n.headline,
+        source: n.source,
+        url: n.url ?? "",
+        publishedAt: new Date(n.publishedAt),
+        sentiment: n.sentiment as NewsArticle["sentiment"],
+        severity: n.severity as NewsArticle["severity"],
+        tickers: n.tickers,
+      }));
+      const { stored: storedNews } = await storeNewsArticles(newsArticles);
+      console.log(`[seed] Stored ${storedNews} news articles from real-news-data.json`);
+    }
+
+    // Attempt to fetch additional fresh news from external sources
+    await ensureNewsData(universe.tradingDays);
+    newsCount = await db.newsItem.count({
+      where: {
+        publishedAt: {
+          gte: new Date(universe.tradingDays[0]),
+          lte: new Date(universe.tradingDays[universe.tradingDays.length - 1] + "T23:59:59"),
         },
-      });
-      existingNewsByKey.set(newsKey, newsItemId);
+      },
+    });
+  } catch (err) {
+    console.error("[seed] News ingestion failed (non-fatal):", err instanceof Error ? err.message : err);
+    try {
+      newsCount = await db.newsItem.count();
+    } catch {
+      newsCount = 0;
     }
-    const newPairs = relatedTickers.filter(
-      (ticker) => !existingNewsSymbolPairs.has(`${newsItemId}:${ticker}`)
-    );
-    if (newPairs.length > 0) {
-      try {
-        await db.newsItemSymbol.createMany({
-          data: newPairs.map((ticker) => ({ newsItemId, ticker })),
-        });
-        for (const ticker of newPairs) {
-          existingNewsSymbolPairs.add(`${newsItemId}:${ticker}`);
-        }
-      } catch {
-        // Ignore duplicates
-      }
-    }
-    newsCount += 1;
   }
 
   const realDataPoints = universe.tickers.reduce((sum, t) => {
@@ -965,7 +1115,7 @@ macroSensitivities[ticker] = betas;
     symbols: universe.tickers.length,
     snapshots: allSnapshots.length,
     coefficients: coefficientRows.length,
-    news: news.length,
+    news: newsCount,
     trainingRuns: trainingRuns.length,
     realDataPoints,
     elapsedMs: Date.now() - t0,
@@ -1058,37 +1208,7 @@ function computeSensitivity(returns: number[], macroChanges: number[]): number {
   return num / den;
 }
 
-// Real news — loaded from real-news-data.json (fetched via z-ai web-search)
-function generateRealNews(days: string[]) {
-  try {
-    const newsFile = join(process.cwd(), "src/lib/scoring/seed/real-news-data.json");
-    const data = JSON.parse(readFileSync(newsFile, "utf-8")) as {
-      news: Array<{
-        headline: string;
-        source: string;
-        url: string;
-        publishedAt: string;
-        sentiment: string;
-        severity: string;
-        tickers: string[];
-      }>;
-    };
-    return data.news.map((n) => ({
-      headline: n.headline,
-      source: n.source,
-      url: n.url,
-      publishedAt: new Date(n.publishedAt),
-      sentiment: n.sentiment,
-      severity: n.severity,
-      tickers: n.tickers,
-    }));
-  } catch {
-    // Fallback: empty news if file missing
-    return [];
-  }
-}
-
-// ─── Python ML Trainer integration (spec §4) ────────────────────────────────────
+  // ─── Python ML Trainer integration (spec §4) ────────────────────────────────────
 // Writes training samples to a JSON file the Python trainer consumes, invokes
 // scripts/ml/train.py, and loads the resulting per-symbol, per-level coefficient
 // artifacts from artifacts/coefficient_store/{ticker}/. Falls back to the

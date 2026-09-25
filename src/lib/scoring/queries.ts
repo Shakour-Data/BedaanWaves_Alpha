@@ -519,12 +519,10 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
     });
   }
 
-  // Include every symbol that has a score snapshot AND at least 50 candles.
-  // Candle data comes exclusively from the MarketBar table (ingested via
-  // ingest_nasdaq_batch.ts for Batch-1+ and future batches). real-market-data.json
-  // is only used for data freshness (live price overlays), NOT for the candle
-  // count filter. Symbols without MarketBar history are excluded so rankings
-  // only contain symbols with a minimum 50-candle history.
+  // Include every symbol that has a score snapshot.
+  // MarketBar data is used for candlestick charts but NOT as a gate for
+  // rankings: symbols scored from real-data JSON (without MarketBar rows)
+  // must still appear in the rankings table.
   const candleCounts = await db.marketBar.groupBy({
     by: ["ticker"],
     where: { ticker: { in: records.map((r) => r.ticker) } },
@@ -535,7 +533,9 @@ export async function fetchRankings(q: RankingsQuery): Promise<RankingsResult> {
   );
   let filtered = records.filter((record) => {
     const barCount = (candleCountByTicker.get(record.ticker) ?? 0) as number;
-    return barCount >= 50;
+    // Show symbols that either have MarketBar data OR a score snapshot with
+    // sufficient coverage (i.e. were actually scored, not just registered).
+    return barCount >= 50 || record.coverage >= 0.5;
   });
 
   const search = q.search?.trim().toLowerCase();
@@ -953,16 +953,47 @@ export async function fetchNews(limit = 30) {
     take: limit,
     include: { tickers: { include: { symbol: true } } },
   });
-  return items.map((n) => ({
-    id: n.id,
-    headline: n.headline,
-    source: n.source,
-    url: n.url,
-    publishedAt: n.publishedAt.toISOString(),
-    sentiment: n.sentiment,
-    severity: n.severity,
-    tickers: n.tickers.map((t) => t.ticker),
-  }));
+
+  if (items.length > 0) {
+    return items.map((n) => ({
+      id: n.id,
+      headline: n.headline,
+      source: n.source,
+      url: n.url,
+      publishedAt: n.publishedAt.toISOString(),
+      sentiment: n.sentiment,
+      severity: n.severity,
+      tickers: n.tickers.map((t) => t.ticker),
+    }));
+  }
+
+  // Fallback: load from real-news-data.json when the database has no news items
+  // (e.g., after a force seed that deleted data but hasn't re-populated yet).
+  try {
+    const newsFile = join(process.cwd(), "src/lib/scoring/seed/real-news-data.json");
+    const newsData = JSON.parse(readFileSync(newsFile, "utf-8"));
+    const jsonNews: Array<{
+      headline: string;
+      source: string;
+      url?: string;
+      publishedAt: string;
+      sentiment: string;
+      severity: string;
+      tickers: string[];
+    }> = newsData.news ?? [];
+    return jsonNews.slice(0, limit).map((n, i) => ({
+      id: `json-${i}`,
+      headline: n.headline,
+      source: n.source,
+      url: n.url ?? null,
+      publishedAt: n.publishedAt,
+      sentiment: n.sentiment,
+      severity: n.severity,
+      tickers: n.tickers,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // ─── Ticker tape (rotating marquee) ──────────────────────────────────────────────

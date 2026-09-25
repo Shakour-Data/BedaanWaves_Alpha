@@ -20,6 +20,7 @@ export const metadata: Metadata = {
     "NASDAQ-exclusive, per-symbol ML-learned hierarchical scoring & ranking engine. 6 dimensions · 44 sub-dimensions · 135 aspects · 173 sub-aspects · 865+ indicators. TradingView-integrated UI.",
   icons: {
     icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/apple-touch-icon.png" }],
   },
   keywords: [
     "BedaanWaves",

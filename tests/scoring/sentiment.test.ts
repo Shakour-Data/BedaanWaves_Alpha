@@ -18,9 +18,10 @@ interface NewsItem {
   tickers: string[];
 }
 
-// ─── Test 1: News lookback window includes 5-day range ──────────────────────────
-// The 5-day lookback ensures the latest news reaches the latest scoring day.
-test("computeNewsSentimentForDay picks up news within 5-day window", () => {
+// ─── Test 1: News lookback window includes 20-day range ──────────────────────────
+// The 20-day lookback ensures the latest news reaches the latest scoring
+// day even when news and trading days don't align perfectly.
+test("computeNewsSentimentForDay picks up news within 20-day window", () => {
   const news: NewsItem[] = [
     {
       headline: "Test bullish news",
@@ -32,14 +33,14 @@ test("computeNewsSentimentForDay picks up news within 5-day window", () => {
     },
   ];
 
-  // 5 days after news should still be picked up
-  const result5d = computeNewsSentimentForDay(news, "2026-09-22");
-  assert.ok(result5d["AAPL"], "Should include news from 5 days ago");
-  assert.ok(result5d["AAPL"].avgSentiment > 50, "Bullish news should produce above-neutral sentiment");
+  // 20 days after news should still be picked up
+  const result20d = computeNewsSentimentForDay(news, "2026-10-07");
+  assert.ok(result20d["AAPL"], "Should include news from 20 days ago");
+  assert.ok(result20d["AAPL"].avgSentiment > 50, "Bullish news should produce above-neutral sentiment");
 
-  // 6 days after news should NOT be picked up
-  const result6d = computeNewsSentimentForDay(news, "2026-09-23");
-  assert.ok(!result6d["AAPL"], "Should NOT include news from 6+ days ago");
+  // 21 days after news should NOT be picked up
+  const result21d = computeNewsSentimentForDay(news, "2026-10-08");
+  assert.ok(!result21d["AAPL"], "Should NOT include news from 21+ days ago");
 });
 
 test("computeNewsSentimentForDay does NOT include future news", () => {

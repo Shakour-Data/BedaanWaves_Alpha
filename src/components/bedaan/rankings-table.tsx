@@ -110,7 +110,6 @@ const COLUMN_DEFINITIONS: ColumnDefinition[] = [
   { key: "grade", label: "Grade", kind: "text", align: "right" },
   { key: "price", label: "Price", kind: "number", align: "right" },
   { key: "priceChange", label: "Δ%", kind: "number", align: "right" },
-  { key: "marketCap", label: "Mkt Cap", kind: "number", align: "right", responsiveClass: "hidden md:table-cell" },
   { key: "coverage", label: "Coverage", kind: "number", align: "right", responsiveClass: "hidden lg:table-cell" },
   ...DIMENSION_KEYS.map(
     (d) =>
@@ -124,8 +123,6 @@ const COLUMN_DEFINITIONS: ColumnDefinition[] = [
       }) as ColumnDefinition,
   ),
   { key: "processingStatus", label: "Status", kind: "text", align: "left", responsiveClass: "hidden lg:table-cell" },
-  { key: "batchId", label: "Batch", kind: "text", align: "left", responsiveClass: "hidden xl:table-cell" },
-  { key: "generationId", label: "Gen", kind: "text", align: "left", responsiveClass: "hidden xl:table-cell" },
   { key: "dataQuality", label: "Quality", kind: "text", align: "left", responsiveClass: "hidden xl:table-cell" },
 ];
 
@@ -297,14 +294,6 @@ function RankingCell({ column, row }: { column: ColumnDefinition; row: RankingRo
         <td className={`px-2 py-1.5 font-mono ${alignmentClass} ${responsiveClass}`} style={{ color: row.priceChange >= 0 ? "#22c55e" : "#ef4444" }}>
           {row.priceChange >= 0 ? "+" : ""}
           {row.priceChange.toFixed(2)}%
-        </td>
-      );
-    case "marketCap":
-      return (
-        <td className={`px-2 py-1.5 font-mono ${alignmentClass} ${responsiveClass}`}>
-          {row.marketCap > 0
-            ? (row.marketCap >= 1e12 ? (row.marketCap / 1e12).toFixed(2) + "T" : (row.marketCap / 1e9).toFixed(1) + "B")
-            : "—"}
         </td>
       );
     case "coverage":

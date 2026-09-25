@@ -37,7 +37,7 @@ export function NewsRibbon({ onSymbolClick }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef(0);
 
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["news"],
     queryFn: async () => {
       const r = await fetch("/api/news?limit=30");
@@ -50,6 +50,15 @@ export function NewsRibbon({ onSymbolClick }: Props) {
 
   const items = data ?? [];
 
+  // Reset scroll offset when the item set changes (e.g. initial load, refetch)
+  const prevLengthRef = useRef(items.length);
+  useEffect(() => {
+    if (items.length !== prevLengthRef.current) {
+      offsetRef.current = 0;
+      prevLengthRef.current = items.length;
+    }
+  }, [items.length]);
+
   useEffect(() => {
     if (paused) return;
     let raf = 0;
@@ -57,7 +66,7 @@ export function NewsRibbon({ onSymbolClick }: Props) {
     const tick = (now: number) => {
       const dt = now - last;
       last = now;
-      offsetRef.current -= (dt / 16) * 0.5; // px per frame
+      offsetRef.current -= (dt / 16) * 2; // ~120px/sec at 60fps
       // wrap when we've scrolled past the first copy
       if (scrollRef.current) {
         const w = scrollRef.current.scrollWidth / 2;
@@ -72,6 +81,8 @@ export function NewsRibbon({ onSymbolClick }: Props) {
 
   // Duplicate items so the marquee loops seamlessly
   const doubled = [...items, ...items];
+
+  const isLoading = isPending && items.length === 0;
 
   return (
     <div className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background/95 backdrop-blur">
@@ -88,7 +99,7 @@ export function NewsRibbon({ onSymbolClick }: Props) {
         >
           {doubled.length === 0 ? (
             <span className="px-2 py-1.5 text-[11px] text-muted-foreground">
-              Loading market news…
+              {isLoading ? "Loading market news…" : "No breaking news at the moment"}
             </span>
           ) : (
             doubled.map((n, i) => (

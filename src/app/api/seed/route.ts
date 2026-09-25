@@ -8,7 +8,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, ...res });
 }
 
-export async function GET() {
-  const res = await seedIfNeeded({ force: false });
+export async function GET(req: NextRequest) {
+  const force = req.nextUrl.searchParams.get("force") === "true";
+  const res = await seedIfNeeded({ force });
   return NextResponse.json({ ok: true, ...res });
 }

@@ -224,7 +224,7 @@ export function MarketSidebar({ onSymbolSelect }: Props) {
 
       {/* Quick access symbols - dynamic top by market cap */}
       <div className="rounded border border-border bg-card p-2">
-        <div className="mb-1 text-[11px] font-semibold">Quick Access (Top by Mkt Cap)</div>
+        <div className="mb-1 text-[11px] font-semibold">Quick Access (Top Ranked)</div>
         {topSymbolsQ.isLoading ? (
           <Skeleton className="h-16 w-full" />
         ) : (

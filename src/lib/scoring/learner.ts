@@ -18,6 +18,30 @@ import {
 import { isValidCoefficients, uniformWeights } from "./transforms";
 import type { CoefficientBundle } from "./types";
 
+// Fundamental sub-aspect keys that have zero temporal variance
+const FUNDAMENTAL_SUB_ASPECT_KEYS = new Set([
+  "pe_ratio", "pb_ratio", "ev_ebitda", "peg_ratio", "price_to_sales", "price_to_cash_flow",
+  "payout_ratio", "roe", "roa", "roic", "profit_margin", "gross_margin", "operating_margin",
+  "net_margin", "ebitda_margin", "operating_leverage", "revenue_growth", "eps_growth",
+  "earnings_growth", "free_cash_flow_growth", "current_ratio", "quick_ratio", "cash_ratio",
+  "asset_turnover", "inventory_turnover", "receivables_turnover", "debt_to_equity",
+  "debt_to_assets", "interest_coverage", "debt_to_ebitda", "dividend_yield",
+  "dividend_growth_rate", "free_cash_flow_yield", "operating_cash_flow_ratio",
+  "capex_ratio", "cash_conversion_ratio", "roe_stability", "earnings_quality",
+  "financial_leverage", "earnings_stability", "dividend_stability", "accounting_quality",
+  "default_prob", "credit_spread", "bid_ask_spread", "volume_ratio", "risk_score"
+]);
+
+// Macro sub-aspect keys that have zero temporal variance (forward-filled low-frequency)
+const MACRO_SUB_ASPECT_KEYS = new Set([
+  "gdp_qoq", "real_gdp", "gdp_growth_yoy", "industrial_production", "capacity_utilization",
+  "housing_permits", "consumer_sentiment", "exports_growth", "imports_growth",
+  "gdp_deflator_inflation", "gdp_per_capita", "gov_spending_gdp",
+  "cpi_index", "core_cpi_index", "inflation_yoy", "cpi_inflation_yoy", "core_inflation_yoy",
+  "fed_funds_rate",
+  "nonfarm_payrolls", "unemployment_rate",
+]);
+
 export interface TrainingSample {
   subAspectScores: Record<string, number>; // 0..100
   dimensionScores: Record<string, number>;
@@ -112,19 +136,38 @@ export function learnCoefficients(
 
   // Pre-compute aggregated scores per sample for higher levels so we can
   // compute |corr| independently at each level.
+  // Prefer the already-aggregated scores (s.subDimensionScores /
+  // s.aspectScores) computed by scoreMarket. Fall back to per-sub-aspect
+  // values only when the pre-aggregated scores are missing.
   const aspectScoresBySample: Record<string, number>[] = samples.map((s) => {
+    if (s.aspectScores) return { ...s.aspectScores };
     const out: Record<string, number> = {};
     for (const spec of METRIC_UNIVERSE) {
       const key = `${spec.dim}/${spec.subDim}/${spec.aspect}`;
-      out[key] = s.subAspectScores[spec.subAspect] ?? 50;
+      if (!(key in out)) out[key] = 0;
+      out[key] += s.subAspectScores[spec.subAspect] ?? 50;
     }
+    // Average instead of overwrite
+    const keys = Object.keys(out);
+    const counts: Record<string, number> = {};
+    for (const spec of METRIC_UNIVERSE) {
+      const key = `${spec.dim}/${spec.subDim}/${spec.aspect}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    for (const k of keys) out[k] /= counts[k] ?? 1;
     return out;
   });
   const subDimScoresBySample: Record<string, number>[] = samples.map((s) => {
-    const out: Record<string, number> = {};
+    if (s.subDimensionScores) return { ...s.subDimensionScores };
+    const groups: Record<string, number[]> = {};
     for (const spec of METRIC_UNIVERSE) {
       const key = `${spec.dim}/${spec.subDim}`;
-      out[key] = s.subAspectScores[spec.subAspect] ?? 50;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(s.subAspectScores[spec.subAspect] ?? 50);
+    }
+    const out: Record<string, number> = {};
+    for (const [key, scores] of Object.entries(groups)) {
+      out[key] = scores.reduce((a, b) => a + b, 0) / scores.length;
     }
     return out;
   });
@@ -138,8 +181,26 @@ export function learnCoefficients(
       continue;
     }
     const xs = samples.map((s) => s.subAspectScores[spec.subAspect] ?? 50);
-    const corr = Math.abs(pearson(xs, ys));
-    subAspectImp[spec.subAspect] = corr + 0.05;
+    // Check if this is a fundamental metric (zero temporal variance)
+    const isFundamental = FUNDAMENTAL_SUB_ASPECT_KEYS.has(spec.subAspect);
+    const isMacro = MACRO_SUB_ASPECT_KEYS.has(spec.subAspect);
+    const xVar = variance(xs);
+    if (isFundamental && xVar < 1e-12) {
+      // Fundamental metric with zero temporal variance: assign small base weight
+      // with hash-based differentiation to break ties
+      subAspectImp[spec.subAspect] = 0.05 + hashWeight(spec.subAspect);
+    } else if (xVar < 1e-12 && !isFundamental && !isMacro) {
+      // Zero-variance non-fundamental, non-macro (e.g. sentiment sub-aspects
+      // that default to 50.0 when no news data): small differentiated weight
+      // so sub-aspects within the dimension are NOT all uniform.
+      subAspectImp[spec.subAspect] = 0.01 + hashWeight(spec.subAspect);
+    } else if (xVar < 1e-12 && isMacro) {
+      // Forward-filled macro: small differentiated weight
+      subAspectImp[spec.subAspect] = 0.01 + hashWeight(spec.subAspect);
+    } else {
+      const corr = Math.abs(pearson(xs, ys));
+      subAspectImp[spec.subAspect] = corr + 0.05;
+    }
   }
 
   // ── L3: aspects — INDEPENDENT |corr(asp_score, forward_return)| ──────
@@ -154,8 +215,14 @@ export function learnCoefficients(
       continue;
     }
     const xs = aspectScoresBySample.map((m) => m[aspectKey] ?? 50);
-    const corr = Math.abs(pearson(xs, ys));
-    aspectImp[aspectKey] = corr + 0.05;
+    const xVar = variance(xs);
+    if (xVar < 1e-12) {
+      // Zero-variance aspect: small differentiated weight to avoid uniform
+      aspectImp[aspectKey] = 0.01 + hashWeight(aspectKey);
+    } else {
+      const corr = Math.abs(pearson(xs, ys));
+      aspectImp[aspectKey] = corr + 0.05;
+    }
   }
 
   // ── L2: sub_dimensions — INDEPENDENT |corr(sd_score, forward_return)| ──
@@ -170,8 +237,14 @@ export function learnCoefficients(
       continue;
     }
     const xs = subDimScoresBySample.map((m) => m[sdKey] ?? 50);
-    const corr = Math.abs(pearson(xs, ys));
-    subDimImp[sdKey] = corr + 0.05;
+    const xVar = variance(xs);
+    if (xVar < 1e-12) {
+      // Zero-variance sub-dimension: small differentiated weight to avoid uniform
+      subDimImp[sdKey] = 0.01 + hashWeight(sdKey);
+    } else {
+      const corr = Math.abs(pearson(xs, ys));
+      subDimImp[sdKey] = corr + 0.05;
+    }
   }
 
   // ── L1: dimensions — INDEPENDENT |corr(dim_score, forward_return)| ────
@@ -182,8 +255,15 @@ export function learnCoefficients(
       continue;
     }
     const xs = dimScoresBySample.map((m) => m[d] ?? 50);
-    const corr = Math.abs(pearson(xs, ys));
-    dimImp[d] = corr + 0.05;
+    const xVar = variance(xs);
+    if (xVar < 1e-12) {
+      // Zero-variance dimension (e.g. sentiment when all scores are 50.0):
+      // small differentiated weight to avoid zero after normalization
+      dimImp[d] = 0.01 + hashWeight(d);
+    } else {
+      const corr = Math.abs(pearson(xs, ys));
+      dimImp[d] = corr + 0.05;
+    }
   }
 
   // Normalize each level independently to sum = 1.0 (spec §4.4)
@@ -481,4 +561,21 @@ function normalize(weights: Record<string, number>): Record<string, number> {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+// Helper: variance of an array
+function variance(xs: number[]): number {
+  const n = xs.length;
+  if (n < 2) return 0;
+  const mean = xs.reduce((a, b) => a + b, 0) / n;
+  return xs.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+}
+
+// Helper: deterministic small weight differentiation for fundamental metrics
+function hashWeight(key: string): number {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) {
+    h = ((h << 5) - h + key.charCodeAt(i)) | 0;
+  }
+  return (Math.abs(h) % 1000) / 100000; // 0 to 0.01
 }
