@@ -258,6 +258,9 @@ REPORT-final.md
 # Runtime logs
 logs/
 
+# Kilo tool output (do not track)
+tool-results/
+
 # Ingestion checkpoint (runtime state)
 src/lib/scoring/seed/.ingest-checkpoint.json
 
