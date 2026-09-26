@@ -65,7 +65,7 @@ export function Header({ onSymbolSelect }: Props) {
           </span>
         </div>
         <Badge variant="outline" className="ml-1 hidden text-[9px] sm:inline-flex">
-          v2.1.0
+          v2.1.1
         </Badge>
       </div>
 
