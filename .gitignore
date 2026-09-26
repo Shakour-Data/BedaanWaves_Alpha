@@ -332,3 +332,4 @@ tmp_baseline_store/
 tsconfig.scripts.json
 
 .vercel
+.env
