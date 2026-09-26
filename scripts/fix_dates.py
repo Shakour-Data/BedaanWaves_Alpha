@@ -1,4 +1,4 @@
-import sqlite3
+import sqlite3, os
 from datetime import datetime, timezone
 
 db_path = os.environ.get("DATABASE_URL", "").replace("file:", "").replace("custom.db", "custom.db")
