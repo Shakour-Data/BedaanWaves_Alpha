@@ -127,6 +127,7 @@ export function RadarScoreChart({ ticker }: Props) {
                   (d) => DIMENSION_META[d].label === dim
                 );
                 const topSubs = dimKey ? data.topSubDims?.[dimKey] ?? [] : [];
+                const macroSubs = dimKey === "macro" ? (data.macroSubAspectDetail ?? []) : [];
                 return (
                   <div className="rounded border border-border bg-background/95 p-2 text-[10px] shadow-md backdrop-blur">
                     <div className="font-semibold">{dim}</div>
@@ -142,6 +143,17 @@ export function RadarScoreChart({ ticker }: Props) {
                         {topSubs.map((s: { key: string; score: number }) => (
                           <div key={s.key} className="flex justify-between">
                             <span>{s.key}</span>
+                            <span>{s.score.toFixed(1)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {macroSubs.length > 0 && (
+                      <div className="mt-1 border-t border-border pt-1 text-muted-foreground">
+                        <div className="font-semibold">Top macro drivers:</div>
+                        {macroSubs.slice(0, 5).map((s: { key: string; score: number }) => (
+                          <div key={s.key} className="flex justify-between">
+                            <span>{s.key.replace(/_/g, " ")}</span>
                             <span>{s.score.toFixed(1)}</span>
                           </div>
                         ))}

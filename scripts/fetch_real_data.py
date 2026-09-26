@@ -126,7 +126,8 @@ def _ttm(frame: pd.DataFrame, period_idx: int, key: str, quarters: int = 4) -> f
     try:
         if period_idx < 0 or key not in frame.index or period_idx >= len(frame.columns):
             return None
-        values = [frame.loc[key, j] for j in range(max(0, period_idx - quarters + 1), period_idx + 1)]
+        cols = frame.columns
+        values = [frame.loc[key, cols[j]] for j in range(max(0, period_idx - quarters + 1), period_idx + 1)]
         values = [float(v) for v in values if pd.notna(v) and np.isfinite(float(v))]
         return sum(values) if len(values) == min(quarters, period_idx + 1) else None
     except Exception:
@@ -179,24 +180,24 @@ def _compute_fundamentals_from_statements(tk: yf.Ticker, info: dict) -> dict:
     if fin is None or fin.empty or bs is None or bs.empty or cf is None or cf.empty:
         return out
 
-    revenue = _safe_get(fin, "Total Revenue") or _safe_get(fin, "Revenue")
-    gross_profit = _safe_get(fin, "Gross Profit")
-    operating_income = _safe_get(fin, "Operating Income")
-    ebitda = _safe_get(fin, "EBITDA") or _safe_get(fin, "Ebitda")
-    net_income = _safe_get(fin, "Net Income")
-    interest_expense = _safe_get(fin, "Interest Expense")
+    revenue = _safe_get(fin, "TotalRevenue") or _safe_get(fin, "OperatingRevenue")
+    gross_profit = _safe_get(fin, "GrossProfit")
+    operating_income = _safe_get(fin, "OperatingIncome")
+    ebitda = _safe_get(fin, "EBITDA")
+    net_income = _safe_get(fin, "NetIncome")
+    interest_expense = _safe_get(fin, "InterestExpense") or _safe_get(fin, "OtherNonOperatingIncomeExpenses")
     ebit = _safe_get(fin, "EBIT") or operating_income
-    total_assets = _safe_get(bs, "Total Assets")
-    current_assets = _safe_get(bs, "Current Assets")
-    cash = _safe_get(bs, "Cash And Cash Equivalents") or _safe_get(bs, "Cash")
+    total_assets = _safe_get(bs, "TotalAssets")
+    current_assets = _safe_get(bs, "CurrentAssets")
+    cash = _safe_get(bs, "CashAndCashEquivalents") or _safe_get(bs, "CashCashEquivalentsAndShortTermInvestments")
     inventory = _safe_get(bs, "Inventory")
-    receivables = _safe_get(bs, "Accounts Receivable") or _safe_get(bs, "Receivables")
-    total_debt = _safe_get(bs, "Total Debt") or _safe_get(bs, "Long Term Debt")
-    total_equity = _safe_get(bs, "Total Equity") or _safe_get(bs, "Stockholders Equity")
-    current_liabilities = _safe_get(bs, "Current Liabilities")
-    operating_cash_flow = _safe_get(cf, "Operating Cash Flow") or _safe_get(cf, "Cash Flow From Operations")
-    capex = _safe_get(cf, "Capital Expenditure") or _safe_get(cf, "Capital Expenditures")
-    free_cash_flow = operating_cash_flow - abs(capex) if operating_cash_flow and capex else None
+    receivables = _safe_get(bs, "AccountsReceivable") or _safe_get(bs, "Receivables")
+    total_debt = _safe_get(bs, "TotalDebt") or _safe_get(bs, "LongTermDebtAndCapitalLeaseObligation")
+    total_equity = _safe_get(bs, "StockholdersEquity") or _safe_get(bs, "TotalEquityGrossMinorityInterest")
+    current_liabilities = _safe_get(bs, "CurrentLiabilities")
+    operating_cash_flow = _safe_get(cf, "OperatingCashFlow") or _safe_get(cf, "CashFlowFromContinuingOperatingActivities")
+    capex = _safe_get(cf, "CapitalExpenditure")
+    free_cash_flow = (operating_cash_flow or 0) - abs(capex or 0) if operating_cash_flow is not None or capex is not None else None
     market_cap = info.get("marketCap")
 
     if market_cap and operating_cash_flow and operating_cash_flow > 0:
@@ -230,6 +231,8 @@ def _compute_fundamentals_from_statements(tk: yf.Ticker, info: dict) -> dict:
         out["earnings_quality"] = operating_cash_flow / net_income
     if market_cap and revenue and market_cap > 0:
         out["price_to_sales"] = market_cap / revenue
+    if total_assets and total_equity and total_equity != 0:
+        out["financial_leverage"] = total_assets / total_equity
     return out
 
 
@@ -260,38 +263,38 @@ def _build_fundamental_snapshots(tk: yf.Ticker, info: dict, ohlcv: list[dict]) -
         fin_col = fin.columns[period_idx]
         bs_col = bs.columns[min(period_idx, len(bs.columns) - 1)] if len(bs.columns) else None
         cf_col = cf.columns[min(period_idx, len(cf.columns) - 1)] if len(cf.columns) else None
-        revenue = _safe_get(fin, "Total Revenue", period_idx) or _safe_get(fin, "Revenue", period_idx)
-        gross_profit = _safe_get(fin, "Gross Profit", period_idx)
-        operating_income = _safe_get(fin, "Operating Income", period_idx)
-        ebitda = _safe_get(fin, "EBITDA", period_idx) or _safe_get(fin, "Ebitda", period_idx)
-        net_income = _safe_get(fin, "Net Income", period_idx)
-        interest_expense = _safe_get(fin, "Interest Expense", period_idx)
+        revenue = _safe_get(fin, "TotalRevenue", period_idx) or _safe_get(fin, "OperatingRevenue", period_idx)
+        gross_profit = _safe_get(fin, "GrossProfit", period_idx)
+        operating_income = _safe_get(fin, "OperatingIncome", period_idx)
+        ebitda = _safe_get(fin, "EBITDA", period_idx)
+        net_income = _safe_get(fin, "NetIncome", period_idx)
+        interest_expense = _safe_get(fin, "InterestExpense", period_idx) or _safe_get(fin, "OtherNonOperatingIncomeExpenses", period_idx)
         ebit = _safe_get(fin, "EBIT", period_idx) or operating_income
-        total_assets = _safe_get(bs, "Total Assets", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        current_assets = _safe_get(bs, "Current Assets", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        cash = _safe_get(bs, "Cash And Cash Equivalents", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        total_assets = _safe_get(bs, "TotalAssets", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        current_assets = _safe_get(bs, "CurrentAssets", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        cash = _safe_get(bs, "CashAndCashEquivalents", min(period_idx, len(bs.columns) - 1)) or _safe_get(bs, "CashCashEquivalentsAndShortTermInvestments", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
         inventory = _safe_get(bs, "Inventory", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        receivables = _safe_get(bs, "Accounts Receivable", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        total_debt = _safe_get(bs, "Total Debt", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        total_equity = _safe_get(bs, "Total Equity", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        current_liabilities = _safe_get(bs, "Current Liabilities", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
-        operating_cash_flow = _safe_get(cf, "Operating Cash Flow", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
-        capex = _safe_get(cf, "Capital Expenditure", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
+        receivables = _safe_get(bs, "AccountsReceivable", min(period_idx, len(bs.columns) - 1)) or _safe_get(bs, "Receivables", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        total_debt = _safe_get(bs, "TotalDebt", min(period_idx, len(bs.columns) - 1)) or _safe_get(bs, "LongTermDebtAndCapitalLeaseObligation", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        total_equity = _safe_get(bs, "StockholdersEquity", min(period_idx, len(bs.columns) - 1)) or _safe_get(bs, "TotalEquityGrossMinorityInterest", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        current_liabilities = _safe_get(bs, "CurrentLiabilities", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
+        operating_cash_flow = _safe_get(cf, "OperatingCashFlow", min(period_idx, len(cf.columns) - 1)) or _safe_get(cf, "CashFlowFromContinuingOperatingActivities", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
+        capex = _safe_get(cf, "CapitalExpenditure", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
         dividends = _safe_get(cf, "CashDividendsPaid", min(period_idx, len(cf.columns) - 1)) if cf_col is not None else None
         free_cash_flow = operating_cash_flow - abs(capex) if operating_cash_flow and capex else None
         close = next((prices[date] for date in sorted(prices) if date <= effective_at), None)
         shares = _safe_get(bs, "OrdinarySharesNumber", min(period_idx, len(bs.columns) - 1)) if bs_col is not None else None
         market_cap = close * shares if close and shares else None
-        revenue_ttm = _ttm(fin, period_idx, "Total Revenue") or _ttm(fin, period_idx, "Revenue")
+        revenue_ttm = _ttm(fin, period_idx, "TotalRevenue") or _ttm(fin, period_idx, "OperatingRevenue")
         net_income_ttm = _ttm(fin, period_idx, "NetIncomeCommonStockholders") or _ttm(fin, period_idx, "NetIncome")
         ebitda_ttm = _ttm(fin, period_idx, "EBITDA")
         operating_income_ttm = _ttm(fin, period_idx, "OperatingIncome")
-        operating_cash_flow_ttm = _ttm(cf, period_idx, "OperatingCashFlow")
+        operating_cash_flow_ttm = _ttm(cf, period_idx, "OperatingCashFlow") or _ttm(cf, period_idx, "CashFlowFromContinuingOperatingActivities")
         capex_ttm = _ttm(cf, period_idx, "CapitalExpenditure")
         dividends_ttm = _ttm(cf, period_idx, "CashDividendsPaid")
-        prior_revenue = _ttm(fin, period_idx - 1, "Total Revenue") or _ttm(fin, period_idx - 1, "Revenue")
+        prior_revenue = _ttm(fin, period_idx - 1, "TotalRevenue") or _ttm(fin, period_idx - 1, "OperatingRevenue")
         prior_net_income = _ttm(fin, period_idx - 1, "NetIncomeCommonStockholders") or _ttm(fin, period_idx - 1, "NetIncome")
-        prior_ocf = _ttm(cf, period_idx - 1, "OperatingCashFlow")
+        prior_ocf = _ttm(cf, period_idx - 1, "OperatingCashFlow") or _ttm(cf, period_idx - 1, "CashFlowFromContinuingOperatingActivities")
 
         metrics: dict[str, float | None] = {
             "pe_ratio": _statement_ratio(market_cap, net_income_ttm),
@@ -303,7 +306,7 @@ def _build_fundamental_snapshots(tk: yf.Ticker, info: dict, ohlcv: list[dict]) -
             "payout_ratio": _statement_ratio(dividends_ttm, net_income_ttm, 100),
             "roe": _statement_ratio(net_income_ttm, total_equity, 100),
             "roa": _statement_ratio(net_income_ttm, total_assets, 100),
-            "roic": _statement_ratio(operating_income_ttm, total_equity + (total_debt or 0), 100),
+            "roic": _statement_ratio(operating_income_ttm, (total_equity or 0) + (total_debt or 0), 100),
             "profit_margin": _statement_ratio(net_income_ttm, revenue_ttm, 100),
             "gross_margin": _statement_ratio(gross_profit, revenue, 100),
             "operating_margin": _statement_ratio(operating_income, revenue, 100),

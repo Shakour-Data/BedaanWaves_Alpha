@@ -10,7 +10,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { METRIC_UNIVERSE } from "../metric-universe";
-import { clamp, crossSectionalScore } from "../transforms";
+import { clamp, crossSectionalScore, normalizeIndicatorScore } from "../transforms";
 import { SEED_TICKERS_DEDUP, type SeedTicker } from "./universe";
 import { computeNewsSentimentForDayFromDB } from "@/lib/news/db-queries";
 
@@ -1014,6 +1014,7 @@ export class RealTickerWalk {
   public marketCap: number;
   public isEtf: boolean;
   public fundamentalHistory: FundamentalSnapshot[] = [];
+  private readonly metricHistory = new Map<string, number[]>();
   private readonly infoEffectiveAt: string | null;
 
   constructor(ticker: string, data: RealTickerData, seedTicker?: SeedTicker) {
@@ -1030,9 +1031,10 @@ export class RealTickerWalk {
   }
 
   private snapshotForDate(dateStr: string): FundamentalSnapshot | null {
+    const targetDate = dateStr.slice(0, 10);
     let selected: FundamentalSnapshot | null = null;
     for (const snapshot of this.fundamentalHistory) {
-      if (snapshot.effective_at <= dateStr) {
+      if (snapshot.effective_at.slice(0, 10) <= targetDate) {
         selected = snapshot;
       } else {
         break;
@@ -1042,7 +1044,7 @@ export class RealTickerWalk {
   }
 
   private legacyInfoAvailable(dateStr: string): boolean {
-    return this.infoEffectiveAt !== null && dateStr >= this.infoEffectiveAt;
+    return this.infoEffectiveAt !== null && this.infoEffectiveAt.slice(0, 10) <= dateStr.slice(0, 10);
   }
 
   // Compute all metrics for day `idx` using real candle history [0..idx]
@@ -1199,52 +1201,60 @@ export class RealTickerWalk {
     const snapshot = this.snapshotForDate(date);
     const info = snapshot ? null : this.legacyInfoAvailable(date) ? this.info : null;
     const snapshotMetrics = snapshot?.metrics ?? {};
+    const snapshotValue = (key: string): number | null | undefined => {
+      if (!snapshot) return undefined;
+      return Object.prototype.hasOwnProperty.call(snapshotMetrics, key)
+        ? snapshotMetrics[key] ?? null
+        : null;
+    };
+    const legacyValue = (value: number | null | undefined, scale = 1): number | null =>
+      snapshot || value === null || value === undefined || !Number.isFinite(value) ? null : value * scale;
     const baseFundamentals: Record<string, number | null> = {
-      pe_ratio: snapshotMetrics.pe_ratio ?? info?.trailingPE ?? null,
-      pb_ratio: snapshotMetrics.pb_ratio ?? info?.priceToBook ?? null,
-      ev_ebitda: snapshotMetrics.ev_ebitda ?? info?.enterpriseToEbitda ?? null,
-      peg_ratio: snapshotMetrics.peg_ratio ?? info?.pegRatio ?? null,
-      price_to_sales: snapshotMetrics.price_to_sales ?? info?.priceToSalesTrailing12Months ?? null,
-      price_to_cash_flow: snapshotMetrics.price_to_cash_flow ?? info?.priceToCashFlow ?? null,
-      payout_ratio: snapshotMetrics.payout_ratio ?? (info?.payoutRatio !== undefined ? info.payoutRatio * 100 : null),
-      roe: snapshotMetrics.roe ?? (info?.returnOnEquity !== undefined ? info.returnOnEquity * 100 : null),
-      roa: snapshotMetrics.roa ?? (info?.returnOnAssets !== undefined ? info.returnOnAssets * 100 : null),
-      roic: snapshotMetrics.roic ?? (info?.returnOnInvestedCapital !== undefined ? info.returnOnInvestedCapital * 100 : null),
-      profit_margin: snapshotMetrics.profit_margin ?? (info?.profitMargins !== undefined ? info.profitMargins * 100 : null),
-      gross_margin: snapshotMetrics.gross_margin ?? (info?.grossMargins !== undefined ? info.grossMargins * 100 : null),
-      operating_margin: snapshotMetrics.operating_margin ?? (info?.operatingMargins !== undefined ? info.operatingMargins * 100 : null),
-      net_margin: snapshotMetrics.net_margin ?? (info?.profitMargins !== undefined ? info.profitMargins * 100 : null),
-      ebitda_margin: snapshotMetrics.ebitda_margin ?? (info?.ebitdaMargin !== undefined ? info.ebitdaMargin * 100 : null),
-      operating_leverage: snapshotMetrics.operating_leverage ?? info?.operatingLeverage ?? null,
-      revenue_growth: snapshotMetrics.revenue_growth ?? (info?.revenueGrowth !== undefined ? info.revenueGrowth * 100 : null),
-      eps_growth: snapshotMetrics.eps_growth ?? (info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null),
-      earnings_growth: snapshotMetrics.earnings_growth ?? (info?.earningsGrowth !== undefined ? info.earningsGrowth * 100 : null),
-      free_cash_flow_growth: snapshotMetrics.free_cash_flow_growth ?? (info?.freeCashFlowGrowth !== undefined ? info.freeCashFlowGrowth * 100 : null),
-      current_ratio: snapshotMetrics.current_ratio ?? info?.currentRatio ?? null,
-      quick_ratio: snapshotMetrics.quick_ratio ?? info?.quickRatio ?? null,
-      cash_ratio: snapshotMetrics.cash_ratio ?? info?.cashRatio ?? null,
-      asset_turnover: snapshotMetrics.asset_turnover ?? info?.assetTurnover ?? null,
-      inventory_turnover: snapshotMetrics.inventory_turnover ?? info?.inventoryTurnover ?? null,
-      receivables_turnover: snapshotMetrics.receivables_turnover ?? info?.receivablesTurnover ?? null,
-      debt_to_equity: snapshotMetrics.debt_to_equity ?? (info?.debtToEquity !== undefined ? info.debtToEquity : null),
-      debt_to_assets: snapshotMetrics.debt_to_assets ?? (info?.debtToAssets !== undefined ? info.debtToAssets * 100 : null),
-      interest_coverage: snapshotMetrics.interest_coverage ?? info?.interestCoverage ?? null,
-      debt_to_ebitda: snapshotMetrics.debt_to_ebitda ?? info?.totalDebtToEbitda ?? null,
-      dividend_yield: snapshotMetrics.dividend_yield ?? (info?.dividendYield !== undefined ? info.dividendYield * 100 : null),
-      dividend_growth_rate: snapshotMetrics.dividend_growth_rate ?? null,
-      free_cash_flow_yield: snapshotMetrics.free_cash_flow_yield ?? info?.freeCashFlowYield ?? null,
-      operating_cash_flow_ratio: snapshotMetrics.operating_cash_flow_ratio ?? info?.operatingCashFlowRatio ?? null,
-      capex_ratio: snapshotMetrics.capex_ratio ?? null,
-      cash_conversion_ratio: snapshotMetrics.cash_conversion_ratio ?? null,
-      roe_stability: snapshotMetrics.roe_stability ?? null,
-      earnings_quality: snapshotMetrics.earnings_quality ?? null,
-      financial_leverage: snapshotMetrics.financial_leverage ?? null,
-      earnings_stability: snapshotMetrics.earnings_stability ?? null,
-      dividend_stability: snapshotMetrics.dividend_stability ?? null,
-      accounting_quality: snapshotMetrics.accounting_quality ?? null,
+      pe_ratio: snapshotValue("pe_ratio") ?? legacyValue(info?.trailingPE),
+      pb_ratio: snapshotValue("pb_ratio") ?? legacyValue(info?.priceToBook),
+      ev_ebitda: snapshotValue("ev_ebitda") ?? legacyValue(info?.enterpriseToEbitda),
+      peg_ratio: snapshotValue("peg_ratio") ?? legacyValue(info?.pegRatio),
+      price_to_sales: snapshotValue("price_to_sales") ?? legacyValue(info?.priceToSalesTrailing12Months),
+      price_to_cash_flow: snapshotValue("price_to_cash_flow") ?? legacyValue(info?.priceToCashFlow),
+      payout_ratio: snapshotValue("payout_ratio") ?? legacyValue(info?.payoutRatio, 100),
+      roe: snapshotValue("roe") ?? legacyValue(info?.returnOnEquity, 100),
+      roa: snapshotValue("roa") ?? legacyValue(info?.returnOnAssets, 100),
+      roic: snapshotValue("roic") ?? legacyValue(info?.returnOnInvestedCapital, 100),
+      profit_margin: snapshotValue("profit_margin") ?? legacyValue(info?.profitMargins, 100),
+      gross_margin: snapshotValue("gross_margin") ?? legacyValue(info?.grossMargins, 100),
+      operating_margin: snapshotValue("operating_margin") ?? legacyValue(info?.operatingMargins, 100),
+      net_margin: snapshotValue("net_margin") ?? legacyValue(info?.profitMargins, 100),
+      ebitda_margin: snapshotValue("ebitda_margin") ?? legacyValue(info?.ebitdaMargin, 100),
+      operating_leverage: snapshotValue("operating_leverage") ?? legacyValue(info?.operatingLeverage),
+      revenue_growth: snapshotValue("revenue_growth") ?? legacyValue(info?.revenueGrowth, 100),
+      eps_growth: snapshotValue("eps_growth") ?? legacyValue(info?.earningsGrowth, 100),
+      earnings_growth: snapshotValue("earnings_growth") ?? legacyValue(info?.earningsGrowth, 100),
+      free_cash_flow_growth: snapshotValue("free_cash_flow_growth") ?? legacyValue(info?.freeCashFlowGrowth, 100),
+      current_ratio: snapshotValue("current_ratio") ?? legacyValue(info?.currentRatio),
+      quick_ratio: snapshotValue("quick_ratio") ?? legacyValue(info?.quickRatio),
+      cash_ratio: snapshotValue("cash_ratio") ?? legacyValue(info?.cashRatio),
+      asset_turnover: snapshotValue("asset_turnover") ?? legacyValue(info?.assetTurnover),
+      inventory_turnover: snapshotValue("inventory_turnover") ?? legacyValue(info?.inventoryTurnover),
+      receivables_turnover: snapshotValue("receivables_turnover") ?? legacyValue(info?.receivablesTurnover),
+      debt_to_equity: snapshotValue("debt_to_equity") ?? legacyValue(info?.debtToEquity),
+      debt_to_assets: snapshotValue("debt_to_assets") ?? legacyValue(info?.debtToAssets, 100),
+      interest_coverage: snapshotValue("interest_coverage") ?? legacyValue(info?.interestCoverage),
+      debt_to_ebitda: snapshotValue("debt_to_ebitda") ?? legacyValue(info?.totalDebtToEbitda),
+      dividend_yield: snapshotValue("dividend_yield") ?? legacyValue(info?.dividendYield, 100),
+      dividend_growth_rate: snapshotValue("dividend_growth_rate") ?? null,
+      free_cash_flow_yield: snapshotValue("free_cash_flow_yield") ?? legacyValue(info?.freeCashFlowYield),
+      operating_cash_flow_ratio: snapshotValue("operating_cash_flow_ratio") ?? legacyValue(info?.operatingCashFlowRatio),
+      capex_ratio: snapshotValue("capex_ratio") ?? null,
+      cash_conversion_ratio: snapshotValue("cash_conversion_ratio") ?? null,
+      roe_stability: snapshotValue("roe_stability") ?? null,
+      earnings_quality: snapshotValue("earnings_quality") ?? null,
+      financial_leverage: snapshotValue("financial_leverage") ?? null,
+      earnings_stability: snapshotValue("earnings_stability") ?? null,
+      dividend_stability: snapshotValue("dividend_stability") ?? null,
+      accounting_quality: snapshotValue("accounting_quality") ?? null,
       bid_ask_spread: null,
-      volume_ratio: info?.averageVolume != null && info?.averageDailyVolume10Day != null && info.averageVolume > 0
-        ? info.averageDailyVolume10Day / info.averageVolume
+      volume_ratio: legacyValue(info?.averageDailyVolume10Day) !== null && legacyValue(info?.averageVolume) !== null && (info?.averageVolume ?? 0) > 0
+        ? (info!.averageDailyVolume10Day! / info!.averageVolume!)
         : null,
       risk_score: null,
     };
@@ -1270,33 +1280,6 @@ export class RealTickerWalk {
       m[key] = val;
     }
 
-    const fundamentalKeys = Object.keys(baseFundamentals);
-    const snapshotHistory = this.fundamentalHistory.filter((s) => s.effective_at <= date);
-    for (const key of fundamentalKeys) {
-      const values = snapshotHistory
-        .map((s) => s.metrics[key])
-        .filter((v): v is number => v !== null && Number.isFinite(v));
-      if (values.length === 0) continue;
-      const current = values[values.length - 1];
-      const rolling = values.slice(-4);
-      const rollingMeanValue = rolling.length > 0
-        ? rolling.reduce((a, b) => a + b, 0) / rolling.length
-        : null;
-      const rollingMeanStd = rolling.length > 1
-        ? Math.sqrt(rolling.reduce((a, b) => a + (b - (rollingMeanValue ?? 0)) ** 2, 0) / rolling.length)
-        : null;
-      const previous = values.length > 1 ? values[values.length - 2] : null;
-      m[`${key}__rolling_mean`] = rollingMeanValue;
-      m[`${key}__rolling_volatility`] = rollingMeanStd;
-      m[`${key}__lag_1`] = previous;
-      m[`${key}__revision`] = previous !== null && previous !== 0
-        ? ((current - previous) / Math.abs(previous)) * 100
-        : null;
-    }
-    m["fundamental_freshness_days"] = snapshot
-      ? Math.max(0, Math.floor((new Date(date).getTime() - new Date(snapshot.effective_at).getTime()) / 86_400_000))
-      : null;
-    m["fundamental_coverage"] = fundamentalKeys.filter((key) => m[key] !== null && m[key] !== undefined).length / fundamentalKeys.length;
 
     const debtToEquity = m["debt_to_equity"];
     m["default_prob"] = debtToEquity != null
@@ -1423,6 +1406,54 @@ export class RealTickerWalk {
       (recentReturns.length / 20) * 50 + (1 - Math.min(1, retStd * 5)) * 50,
       0, 100
     );
+
+    const fundamentalKeys = Object.keys(baseFundamentals);
+    const snapshotHistory = this.fundamentalHistory.filter((s) => s.effective_at.slice(0, 10) <= date.slice(0, 10));
+    m["fundamental_freshness_days"] = snapshot
+      ? Math.max(0, Math.floor((new Date(date).getTime() - new Date(snapshot.effective_at).getTime()) / 86_400_000))
+      : null;
+    m["fundamental_coverage"] = fundamentalKeys.filter((key) => {
+      const value = baseFundamentals[key];
+      return value !== null && value !== undefined && Number.isFinite(value);
+    }).length / fundamentalKeys.length;
+
+    // Build the five registered variants for every base metric. Fundamental
+    // rolling features use the point-in-time statement history; other metrics
+    // use the causal daily metric history accumulated by this walk.
+    const baseEntries = Object.entries(m).filter(([key]) =>
+      !key.includes("__") && !key.startsWith("fundamental_")
+    );
+    for (const [key, currentValue] of baseEntries) {
+      const dailyHistory = this.metricHistory.get(key) ?? [];
+      const fundamentalHistory = snapshot
+        ? snapshotHistory
+          .map((s) => s.metrics[key])
+          .filter((value): value is number => value !== null && Number.isFinite(value))
+        : [];
+      const history = snapshot ? fundamentalHistory : dailyHistory;
+      const rolling = history.slice(-4);
+      if (rolling.length > 0) {
+        const mean = rolling.reduce((sum, value) => sum + value, 0) / rolling.length;
+        m[`${key}__rolling_mean`] = mean;
+      }
+      if (rolling.length > 1) {
+        const mean = rolling.reduce((sum, value) => sum + value, 0) / rolling.length;
+        const variance = rolling.reduce((sum, value) => sum + (value - mean) ** 2, 0) / rolling.length;
+        m[`${key}__rolling_volatility`] = Math.sqrt(variance);
+      }
+      if (history.length > 1) {
+        m[`${key}__lag_1`] = history[history.length - 2];
+      }
+      if (history.length > 1 && history[history.length - 2] !== 0) {
+        const previous = history[history.length - 2];
+        m[`${key}__revision`] = ((history[history.length - 1] - previous) / Math.abs(previous)) * 100;
+      }
+
+      if (currentValue !== null && currentValue !== undefined && Number.isFinite(currentValue)) {
+        dailyHistory.push(currentValue);
+        this.metricHistory.set(key, dailyHistory.slice(-240));
+      }
+    }
 
     return m;
   }
@@ -1617,7 +1648,12 @@ function peerNormalize(
   const out: Record<string, number> = {};
   for (const spec of specs) {
     const tickers = Object.keys(values);
-    const column = tickers.map((ticker) => values[ticker]?.[spec.subAspect] ?? null);
+    const column = tickers.map((ticker) => {
+      const raw = values[ticker]?.[spec.subAspect] ?? null;
+      return raw !== null && Number.isFinite(raw)
+        ? normalizeIndicatorScore(spec.subAspect, raw, spec.lowerIsBetter)
+        : null;
+    });
     const scores = crossSectionalScore(column, spec.lowerIsBetter);
     for (let i = 0; i < tickers.length; i++) {
       if (column[i] !== null) out[`${tickers[i]}:${spec.subAspect}`] = scores[i];
@@ -1739,12 +1775,12 @@ export async function generateRealDay(
     }
   }
 
-  const peerValues = peerNormalize(
-    assetMetrics,
-    METRIC_UNIVERSE.filter((spec) => spec.dim === "fundamental")
+  const peerSpecs = METRIC_UNIVERSE.filter(
+    (spec) => spec.dim !== "macro" && spec.dim !== "sentiment" && spec.dim !== "ai"
   );
+  const peerValues = peerNormalize(assetMetrics, peerSpecs);
   for (const ticker of universe.tickers) {
-    for (const key of METRIC_UNIVERSE.filter((spec) => spec.dim === "fundamental").map((spec) => spec.subAspect)) {
+    for (const key of peerSpecs.map((spec) => spec.subAspect)) {
       const normalized = peerValues[`${ticker}:${key}`];
       if (normalized !== undefined) assetMetrics[ticker][`${key}__normalized`] = normalized;
     }

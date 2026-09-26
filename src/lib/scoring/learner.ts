@@ -18,30 +18,6 @@ import {
 import { isValidCoefficients, uniformWeights } from "./transforms";
 import type { CoefficientBundle } from "./types";
 
-// Fundamental sub-aspect keys that have zero temporal variance
-const FUNDAMENTAL_SUB_ASPECT_KEYS = new Set([
-  "pe_ratio", "pb_ratio", "ev_ebitda", "peg_ratio", "price_to_sales", "price_to_cash_flow",
-  "payout_ratio", "roe", "roa", "roic", "profit_margin", "gross_margin", "operating_margin",
-  "net_margin", "ebitda_margin", "operating_leverage", "revenue_growth", "eps_growth",
-  "earnings_growth", "free_cash_flow_growth", "current_ratio", "quick_ratio", "cash_ratio",
-  "asset_turnover", "inventory_turnover", "receivables_turnover", "debt_to_equity",
-  "debt_to_assets", "interest_coverage", "debt_to_ebitda", "dividend_yield",
-  "dividend_growth_rate", "free_cash_flow_yield", "operating_cash_flow_ratio",
-  "capex_ratio", "cash_conversion_ratio", "roe_stability", "earnings_quality",
-  "financial_leverage", "earnings_stability", "dividend_stability", "accounting_quality",
-  "default_prob", "credit_spread", "bid_ask_spread", "volume_ratio", "risk_score"
-]);
-
-// Macro sub-aspect keys that have zero temporal variance (forward-filled low-frequency)
-const MACRO_SUB_ASPECT_KEYS = new Set([
-  "gdp_qoq", "real_gdp", "gdp_growth_yoy", "industrial_production", "capacity_utilization",
-  "housing_permits", "consumer_sentiment", "exports_growth", "imports_growth",
-  "gdp_deflator_inflation", "gdp_per_capita", "gov_spending_gdp",
-  "cpi_index", "core_cpi_index", "inflation_yoy", "cpi_inflation_yoy", "core_inflation_yoy",
-  "fed_funds_rate",
-  "nonfarm_payrolls", "unemployment_rate",
-]);
-
 export interface TrainingSample {
   subAspectScores: Record<string, number>; // 0..100
   dimensionScores: Record<string, number>;
@@ -94,7 +70,8 @@ const LEVELS: Array<"dimensions" | "sub_dimensions" | "aspects" | "sub_aspects">
 
 export function learnCoefficients(
   ticker: string,
-  samples: TrainingSample[]
+  samples: TrainingSample[],
+  panelSamples: TrainingSample[] = samples
 ): LearnedCoeffs {
   // Attempt to load Python-trained coefficients from artifacts.
   // When present and valid, each level's weights are used directly.
@@ -172,8 +149,17 @@ export function learnCoefficients(
     return out;
   });
   const dimScoresBySample = samples.map((s) => s.dimensionScores);
+  const panelYs = panelSamples.map((s) => s.forwardReturn);
+  const panelSubAspectScores = panelSamples.map((s) => s.subAspectScores);
+  const panelAspectScores = panelSamples.map((s) => s.aspectScores ?? {});
+  const panelSubDimScores = panelSamples.map((s) => s.subDimensionScores ?? {});
+  const panelDimScores = panelSamples.map((s) => s.dimensionScores);
+  const panelCorrelation = (values: number[]): number => {
+    if (values.length < 3 || variance(values) < 1e-12 || panelYs.length !== values.length) return 0;
+    return Math.abs(pearson(values, panelYs));
+  };
 
-  // ── L4: sub_aspects — |corr(sa_score, forward_return)| ──────────────
+  // ── L4: sub_aspects — local correlation, then panel correlation ──────────────
   const subAspectImp: Record<string, number> = {};
   for (const spec of METRIC_UNIVERSE) {
     if (coldStart) {
@@ -181,26 +167,12 @@ export function learnCoefficients(
       continue;
     }
     const xs = samples.map((s) => s.subAspectScores[spec.subAspect] ?? 50);
-    // Check if this is a fundamental metric (zero temporal variance)
-    const isFundamental = FUNDAMENTAL_SUB_ASPECT_KEYS.has(spec.subAspect);
-    const isMacro = MACRO_SUB_ASPECT_KEYS.has(spec.subAspect);
     const xVar = variance(xs);
-    if (isFundamental && xVar < 1e-12) {
-      // Fundamental metric with zero temporal variance: assign small base weight
-      // with hash-based differentiation to break ties
-      subAspectImp[spec.subAspect] = 0.05 + hashWeight(spec.subAspect);
-    } else if (xVar < 1e-12 && !isFundamental && !isMacro) {
-      // Zero-variance non-fundamental, non-macro (e.g. sentiment sub-aspects
-      // that default to 50.0 when no news data): small differentiated weight
-      // so sub-aspects within the dimension are NOT all uniform.
-      subAspectImp[spec.subAspect] = 0.01 + hashWeight(spec.subAspect);
-    } else if (xVar < 1e-12 && isMacro) {
-      // Forward-filled macro: small differentiated weight
-      subAspectImp[spec.subAspect] = 0.01 + hashWeight(spec.subAspect);
-    } else {
-      const corr = Math.abs(pearson(xs, ys));
-      subAspectImp[spec.subAspect] = corr + 0.05;
-    }
+    const panelXs = panelSubAspectScores.map((scores) => scores[spec.subAspect] ?? 50);
+    const panelCorr = panelCorrelation(panelXs);
+    subAspectImp[spec.subAspect] = xVar >= 1e-12
+      ? Math.abs(pearson(xs, ys)) + 0.05
+      : panelCorr + 0.01;
   }
 
   // ── L3: aspects — INDEPENDENT |corr(asp_score, forward_return)| ──────
@@ -216,13 +188,10 @@ export function learnCoefficients(
     }
     const xs = aspectScoresBySample.map((m) => m[aspectKey] ?? 50);
     const xVar = variance(xs);
-    if (xVar < 1e-12) {
-      // Zero-variance aspect: small differentiated weight to avoid uniform
-      aspectImp[aspectKey] = 0.01 + hashWeight(aspectKey);
-    } else {
-      const corr = Math.abs(pearson(xs, ys));
-      aspectImp[aspectKey] = corr + 0.05;
-    }
+    const panelXs = panelAspectScores.map((m) => m[aspectKey] ?? 50);
+    aspectImp[aspectKey] = xVar >= 1e-12
+      ? Math.abs(pearson(xs, ys)) + 0.05
+      : panelCorrelation(panelXs) + 0.01;
   }
 
   // ── L2: sub_dimensions — INDEPENDENT |corr(sd_score, forward_return)| ──
@@ -238,13 +207,10 @@ export function learnCoefficients(
     }
     const xs = subDimScoresBySample.map((m) => m[sdKey] ?? 50);
     const xVar = variance(xs);
-    if (xVar < 1e-12) {
-      // Zero-variance sub-dimension: small differentiated weight to avoid uniform
-      subDimImp[sdKey] = 0.01 + hashWeight(sdKey);
-    } else {
-      const corr = Math.abs(pearson(xs, ys));
-      subDimImp[sdKey] = corr + 0.05;
-    }
+    const panelXs = panelSubDimScores.map((m) => m[sdKey] ?? 50);
+    subDimImp[sdKey] = xVar >= 1e-12
+      ? Math.abs(pearson(xs, ys)) + 0.05
+      : panelCorrelation(panelXs) + 0.01;
   }
 
   // ── L1: dimensions — INDEPENDENT |corr(dim_score, forward_return)| ────
@@ -256,14 +222,10 @@ export function learnCoefficients(
     }
     const xs = dimScoresBySample.map((m) => m[d] ?? 50);
     const xVar = variance(xs);
-    if (xVar < 1e-12) {
-      // Zero-variance dimension (e.g. sentiment when all scores are 50.0):
-      // small differentiated weight to avoid zero after normalization
-      dimImp[d] = 0.01 + hashWeight(d);
-    } else {
-      const corr = Math.abs(pearson(xs, ys));
-      dimImp[d] = corr + 0.05;
-    }
+    const panelXs = panelDimScores.map((m) => m[d] ?? 50);
+    dimImp[d] = xVar >= 1e-12
+      ? Math.abs(pearson(xs, ys)) + 0.05
+      : panelCorrelation(panelXs) + 0.01;
   }
 
   // Normalize each level independently to sum = 1.0 (spec §4.4)
@@ -569,13 +531,4 @@ function variance(xs: number[]): number {
   if (n < 2) return 0;
   const mean = xs.reduce((a, b) => a + b, 0) / n;
   return xs.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
-}
-
-// Helper: deterministic small weight differentiation for fundamental metrics
-function hashWeight(key: string): number {
-  let h = 0;
-  for (let i = 0; i < key.length; i++) {
-    h = ((h << 5) - h + key.charCodeAt(i)) | 0;
-  }
-  return (Math.abs(h) % 1000) / 100000; // 0 to 0.01
 }

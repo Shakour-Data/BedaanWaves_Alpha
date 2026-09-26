@@ -143,18 +143,26 @@ describe("learner.ts adapter", async () => {
       });
     }
 
-    const learned = learnCoefficients("TEST", samples);
+    const panelSamples = samples.map((sample, i) => ({
+      ...sample,
+      subAspectScores: {
+        ...sample.subAspectScores,
+        news_sentiment_avg: i,
+      },
+    }));
+    const learned = learnCoefficients("TEST", samples, panelSamples);
     const saWeights = learned.sub_aspects;
 
-    // All sentiment sub-aspects should be present and non-zero
+    // All sentiment sub-aspects should be present and non-zero.
     for (const k of sentKeys) {
       assert.ok(saWeights[k] > 0, `Sentiment sub-aspect '${k}' weight should be > 0, got ${saWeights[k]}`);
     }
 
-    // Sentiment sub-aspects should NOT all be equal (hash-based differentiation)
-    const sentVals = sentKeys.map((k) => saWeights[k]);
-    const allEqual = sentVals.every((v) => Math.abs(v - sentVals[0]) < 1e-12);
-    assert.ok(!allEqual, `Sentiment sub-aspect weights should NOT all be equal, got: ${JSON.stringify(sentVals)}`);
+    // A constant symbol-level feature can still learn from cross-sectional panel variance.
+    assert.ok(
+      saWeights["news_sentiment_avg"] > saWeights["news_volume"],
+      `Panel-varying sentiment should outrank the constant feature: ${JSON.stringify(sentKeys.map((k) => [k, saWeights[k]]))}`
+    );
   });
 
   // ─── Regression: zero-variance sentiment dimension must produce non-zero weight ─

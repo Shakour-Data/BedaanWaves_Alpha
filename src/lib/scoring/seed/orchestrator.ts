@@ -519,7 +519,8 @@ export async function seedIfNeeded(options: SeedOptions = {}): Promise<SeedResul
     for (const ticker of universe.tickers) {
       const samples = trainingSamplesByTicker[ticker] ?? [];
       if (samples.length >= 50) {
-        const learned = learnCoefficients(ticker, samples);
+        const panelSamples = Object.values(trainingSamplesByTicker).flat();
+        const learned = learnCoefficients(ticker, samples, panelSamples);
         coeffs[ticker] = {
           dimensions: learned.dimensions,
           sub_dimensions: learned.sub_dimensions,
@@ -799,7 +800,8 @@ macroSensitivities[ticker] = betas;
     let learned = pythonTrained.get(ticker) ?? null;
     if (learned === null) {
       // Fallback: TypeScript |corr| learner.
-      learned = learnCoefficients(ticker, samples);
+      const panelSamples = Object.values(trainingSamplesByTicker).flat();
+      learned = learnCoefficients(ticker, samples, panelSamples);
     }
     const trainDurationMs = Date.now() - trainStart;
     const ts = new Date().toISOString();

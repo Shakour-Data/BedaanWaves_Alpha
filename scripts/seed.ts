@@ -5,7 +5,7 @@ import { seedIfNeeded } from "../src/lib/scoring/seed/orchestrator.ts";
 
 (async () => {
   console.log("Starting BedaanWaves REAL-DATA seed...");
-  const res = await seedIfNeeded({ incremental: true });
+  const res = await seedIfNeeded({ incremental: false, force: true });
   console.log("Real-data seed complete:", JSON.stringify(res, null, 2));
   process.exit(0);
 })();

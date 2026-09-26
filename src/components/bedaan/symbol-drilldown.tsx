@@ -17,6 +17,7 @@ import {
   BarChart3,
   Crosshair,
   FileSearch,
+  Globe,
   Gauge,
   Layers,
   LineChart,
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 import { HistoricalScoreChart } from "./historical-score-chart";
 import { RadarScoreChart } from "./radar-score-chart";
+import { MacroDetailPanel } from "./macro-detail-panel";
 import { CoefficientsPanel } from "./coefficients-panel";
 import { DecompositionPanel } from "./decomposition-panel";
 import { PeerComparison } from "./peer-comparison";
@@ -304,6 +306,9 @@ const detail: SymbolDetail | undefined = q.data;
             <TabsTrigger value="radar" className="text-[10px]">
               <Crosshair className="mr-1 h-3 w-3" /> Radar
             </TabsTrigger>
+            <TabsTrigger value="macro" className="text-[10px]">
+              <Globe className="mr-1 h-3 w-3" /> Macro
+            </TabsTrigger>
             <TabsTrigger value="coefficients" className="text-[10px]">
               <Layers className="mr-1 h-3 w-3" /> Coefficients
             </TabsTrigger>
@@ -332,6 +337,12 @@ const detail: SymbolDetail | undefined = q.data;
               <RadarScoreChart ticker={ticker} />
               <div className="mt-4 text-[10px] text-muted-foreground">
                 <span className="font-semibold">Spec §11.2:</span> 6-axis radar with current + 30d-ago + NASDAQ median + sector median overlays. Hover on vertex shows dimension score + top-3 contributing sub-dimensions.
+              </div>
+            </TabsContent>
+            <TabsContent value="macro" className="mt-0">
+              <MacroDetailPanel ticker={ticker} />
+              <div className="mt-4 text-[10px] text-muted-foreground">
+                <span className="font-semibold">Macro Environment:</span> Per-symbol macro dimension score broken down by sub-aspects (GDP, Inflation, Interest Rates, FX, Commodities, Employment). Scores reflect real published data with time-series context.
               </div>
             </TabsContent>
             <TabsContent value="coefficients" className="mt-0">

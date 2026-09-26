@@ -3,7 +3,7 @@
 import { db } from "@/lib/db";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { DIMENSION_KEYS, DIMENSION_META } from "@/lib/scoring/metric-universe";
+import { DIMENSION_KEYS, DIMENSION_META, METRIC_UNIVERSE } from "@/lib/scoring/metric-universe";
 import { gradeFor } from "@/lib/scoring/transforms";
 import type { DimensionKey } from "@/lib/scoring/metric-universe";
 
@@ -825,6 +825,17 @@ export async function fetchRadarProfile(ticker: string, generationId?: string) {
     topSubDims[d] = entries;
   }
 
+  // Macro sub-aspect breakdown (for radar tooltip drilldown)
+  const subAspectScores = JSON.parse(snap.subAspectScores) as Record<string, number>;
+  const macroSubAspectDetail: Array<{ key: string; category: string; score: number }> = [];
+  for (const [key, score] of Object.entries(subAspectScores)) {
+    const spec = METRIC_UNIVERSE.find((m) => m.subAspect === key);
+    if (spec && spec.dim === "macro") {
+      macroSubAspectDetail.push({ key, category: spec.subDim, score: score as number });
+    }
+  }
+  macroSubAspectDetail.sort((a, b) => Math.abs(b.score - 50) - Math.abs(a.score - 50));
+
   return {
     symbol: sym,
     current: dims,
@@ -832,6 +843,105 @@ export async function fetchRadarProfile(ticker: string, generationId?: string) {
     nasdaqMedian,
     sectorMedian,
     topSubDims,
+    macroSubAspectDetail,
+    latestAt: latest.toISOString(),
+  };
+}
+
+// ─── Macro detail: per-symbol macro sub-aspect breakdown ──────────────────────
+export async function fetchMacroDetail(ticker: string, generationId?: string) {
+  const sym = await db.symbol.findUnique({ where: { ticker: ticker.toUpperCase() } });
+  if (!sym) return null;
+
+  const effectiveGenerationId = generationId ?? sym.generationId ?? undefined;
+  const latest = await getLatestCapturedAtPerSymbol(sym.ticker, effectiveGenerationId);
+  if (!latest) return null;
+
+  const snap = await db.scoreSnapshot.findFirst({
+    where: { ticker: sym.ticker, capturedAt: latest, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
+  });
+  if (!snap) return null;
+
+  const dimScores = JSON.parse(snap.dimensionScores) as Record<string, number>;
+  const subAspectScores = JSON.parse(snap.subAspectScores) as Record<string, number>;
+  const subDimScores = JSON.parse(snap.subDimensionScores) as Record<string, number>;
+
+  // 30-day-ago macro dimension score
+  const thirtyAgo = new Date(latest.getTime() - 30 * 86_400_000);
+  const thirtyAgoSnap = await db.scoreSnapshot.findFirst({
+    where: { ticker: sym.ticker, capturedAt: { lte: thirtyAgo }, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
+    orderBy: { capturedAt: "desc" },
+  });
+  const thirtyAgoMacro = thirtyAgoSnap
+    ? (JSON.parse(thirtyAgoSnap.dimensionScores) as Record<string, number>).macro ?? 50
+    : 50;
+
+  // Sector median macro score
+  const sectorPeers = await db.scoreSnapshot.findMany({
+    where: {
+      capturedAt: latest,
+      ticker: { not: sym.ticker },
+      symbol: { sector: sym.sector },
+      ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}),
+    },
+    select: { dimensionScores: true },
+  });
+  const macroVals = sectorPeers
+    .map((r) => (JSON.parse(r.dimensionScores) as Record<string, number>).macro ?? 50)
+    .sort((a, b) => a - b);
+  const sectorMedianMacro = macroVals.length ? macroVals[Math.floor(macroVals.length / 2)] : 50;
+
+  // NASDAQ median macro score
+  const allLatest = await db.scoreSnapshot.findMany({
+    where: { capturedAt: latest, ticker: { not: sym.ticker }, ...(effectiveGenerationId ? { generationId: effectiveGenerationId } : {}) },
+    select: { dimensionScores: true },
+  });
+  const nasdaqMacroVals = allLatest
+    .map((r) => (JSON.parse(r.dimensionScores) as Record<string, number>).macro ?? 50)
+    .sort((a, b) => a - b);
+  const nasdaqMedianMacro = nasdaqMacroVals.length ? nasdaqMacroVals[Math.floor(nasdaqMacroVals.length / 2)] : 50;
+
+  // Build macro sub-aspect breakdown grouped by category
+  const macroSubAspectScores: Array<{
+    key: string;
+    category: string;
+    score: number;
+    subDim: string;
+  }> = [];
+  for (const [key, score] of Object.entries(subAspectScores)) {
+    const spec = METRIC_UNIVERSE.find((m) => m.subAspect === key);
+    if (spec && spec.dim === "macro") {
+      macroSubAspectScores.push({
+        key,
+        category: spec.subDim,
+        score: score as number,
+        subDim: spec.subDim,
+      });
+    }
+  }
+  // Sort by category then by |score - 50| descending
+  macroSubAspectScores.sort((a, b) => {
+    if (a.category !== b.category) return a.category.localeCompare(b.category);
+    return Math.abs(b.score - 50) - Math.abs(a.score - 50);
+  });
+
+  // Group by category
+  const grouped: Record<string, typeof macroSubAspectScores> = {};
+  for (const item of macroSubAspectScores) {
+    if (!grouped[item.category]) grouped[item.category] = [];
+    grouped[item.category].push(item);
+  }
+
+  return {
+    symbol: sym,
+    macroScore: dimScores.macro ?? 50,
+    thirtyAgoMacro,
+    sectorMedianMacro,
+    nasdaqMedianMacro,
+    subAspectBreakdown: grouped,
+    subDimensionScores: Object.entries(subDimScores)
+      .filter(([k]) => k.startsWith("macro/"))
+      .reduce((acc, [k, v]) => { acc[k] = v as number; return acc; }, {} as Record<string, number>),
     latestAt: latest.toISOString(),
   };
 }

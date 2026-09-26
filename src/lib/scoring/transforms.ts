@@ -26,6 +26,10 @@ export function invNorm(p: number): number {
   return rationalApprox(Math.sqrt(-2.0 * Math.log(1.0 - p)));
 }
 
+function finite(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -63,7 +67,7 @@ export function crossSectionalScore(
   const presentIdx: number[] = [];
   const presentVals: number[] = [];
   for (let i = 0; i < n; i++) {
-    if (values[i] !== null && !Number.isNaN(values[i] as number)) {
+    if (finite(values[i])) {
       presentIdx.push(i);
       presentVals.push(values[i] as number);
     }
@@ -89,34 +93,56 @@ export function crossSectionalScore(
 // based on where its current value sits in its own historical distribution
 // (percentile rank → inverse-normal → 0-100, same transform as cross-sectional).
 // Excludes the current value from the history to avoid self-bias.
+//
+// Low-frequency handling: quarterly/annual releases (GDP, CPI, payrolls, etc.)
+// often have only 1-3 historical points. Instead of returning neutral 50.0,
+// we use release-to-release change direction + magnitude, mapped through a
+// bounded transform that produces meaningful scores even with sparse data.
 export function timeSeriesScore(
   currentValue: number | null,
   history: number[],
   lowerIsBetter = false
 ): number {
-  if (currentValue === null || Number.isNaN(currentValue as number)) return 50.0;
-  if (history.length < 5) return 50.0;
-  // Exclude the current value from history if it's the last point
-  let hist = history;
-  if (history[history.length - 1] === currentValue) {
-    hist = history.slice(0, -1);
+  if (!finite(currentValue)) return 50.0;
+  const hist = history.filter(finite);
+  if (hist.length < 2) return 50.0;
+
+  // Exclude current value from past to avoid self-bias
+  const past = hist[hist.length - 1] === currentValue ? hist.slice(0, -1) : hist;
+  if (past.length < 2) return 50.0;
+
+  // ── Full history available (≥5 points): use percentile rank ──
+  if (past.length >= 5) {
+    const minVal = Math.min(...past);
+    const maxVal = Math.max(...past);
+    if (maxVal - minVal < 1e-12) return 50.0;
+    let below = 0;
+    for (const v of past) {
+      if (v < currentValue) below++;
+    }
+    const m = past.length;
+    let p = (below + 0.5) / m; // midrank percentile
+    if (lowerIsBetter) p = 1.0 - p;
+    p = clamp(p, 1e-6, 1 - 1e-6);
+    const z = invNorm(p);
+    return clamp(50 + 15 * z, 0, 100);
   }
-  if (hist.length < 5) return 50.0;
-  // Check for zero variance (flat / carried-forward data)
-  const minVal = Math.min(...hist);
-  const maxVal = Math.max(...hist);
-  if (maxVal - minVal < 1e-12) return 50.0; // no historical signal
-  // Count values strictly below current
-  let below = 0;
-  for (const v of hist) {
-    if (v < currentValue) below++;
-  }
-  const m = hist.length;
-  let p = (below + 0.5) / m; // midrank percentile
-  if (lowerIsBetter) p = 1.0 - p;
-  p = clamp(p, 1e-6, 1 - 1e-6);
-  const z = invNorm(p);
-  return clamp(50 + 15 * z, 0, 100);
+
+  // ── Sparse history (2-4 points): use release-to-release change ──
+  // For low-frequency indicators, compare current value to the most recent
+  // prior release. Direction + relative magnitude produce a bounded score.
+  const prior = past[past.length - 1];
+  if (Math.abs(currentValue - prior) < 1e-12) return 50.0;
+
+  // Relative change from prior release
+  const relChange = (currentValue - prior) / (Math.abs(prior) + 1e-9);
+  // Clamp relative change to a reasonable range for scoring
+  const clampedRelChange = clamp(relChange, -0.5, 0.5);
+  // Map [-0.5, 0.5] → score range. Higher change = more extreme score.
+  // Scale: 0.05 change ≈ 10 points from neutral
+  let score = 50 + (clampedRelChange / 0.05) * 10;
+  if (lowerIsBetter) score = 100 - score;
+  return clamp(score, 15, 85);
 }
 
 // ─── Pre-transform rules for bounded/binary/scaled indicators (spec §6.1) ──
@@ -150,24 +176,51 @@ export const TECHNICAL_SCALES: Record<string, number> = {
   vwap_distance: 5.0,
 };
 
+const FUNDAMENTAL_FIELDS = new Set([
+  "pe_ratio", "pb_ratio", "ev_ebitda", "peg_ratio", "price_to_sales", "price_to_cash_flow",
+  "payout_ratio", "roe", "roa", "roic", "profit_margin", "gross_margin", "operating_margin",
+  "net_margin", "ebitda_margin", "operating_leverage", "revenue_growth", "eps_growth",
+  "earnings_growth", "free_cash_flow_growth", "current_ratio", "quick_ratio", "cash_ratio",
+  "asset_turnover", "inventory_turnover", "receivables_turnover", "debt_to_equity",
+  "debt_to_assets", "interest_coverage", "debt_to_ebitda", "dividend_yield",
+  "dividend_growth_rate", "free_cash_flow_yield", "operating_cash_flow_ratio",
+  "capex_ratio", "cash_conversion_ratio", "roe_stability", "earnings_quality",
+  "financial_leverage", "earnings_stability", "dividend_stability", "accounting_quality",
+]);
+
+const FUNDAMENTAL_LOWER_BETTER = new Set([
+  "pe_ratio", "pb_ratio", "ev_ebitda", "peg_ratio", "price_to_sales", "price_to_cash_flow",
+  "debt_to_equity", "debt_to_assets", "debt_to_ebitda", "capex_ratio", "financial_leverage",
+]);
+
+function robustUnbounded(v: number, lowerIsBetter: boolean): number {
+  // Soft saturation preserves ordering without collapsing large ratios into a tie.
+  const scaled = v / (100 + Math.abs(v));
+  return clamp(50 + (lowerIsBetter ? -1 : 1) * 25 * scaled, 0, 100);
+}
+
 export function normalizeIndicatorScore(
   dbField: string,
-  v: number | null
+  v: number | null,
+  lowerIsBetter = false
 ): number {
-  if (v === null || Number.isNaN(v)) return 50.0;
+  if (!finite(v)) return 50.0;
+  const baseField = dbField.includes("__") ? dbField.slice(0, dbField.indexOf("__")) : dbField;
+  const variant = dbField.includes("__") ? dbField.slice(dbField.indexOf("__") + 2) : "raw";
+
   // Sentiment sub-aspects are already on a 0..100 scale (from real-news
   // computation). Just clamp — no cross-sectional re-ranking needed.
-  if (["news_sentiment_avg", "news_volume", "social_sentiment", "social_volume", "analyst_rating", "target_price_change"].includes(dbField)) {
+  if (["news_sentiment_avg", "news_volume", "social_sentiment", "social_volume", "analyst_rating", "target_price_change"].includes(baseField)) {
     return clamp(v, 0, 100);
   }
   // Bounded: rsi_14, stoch_k, mfi_14 → 0..100
-  if (["rsi_14", "stoch_k", "stoch_rsi_k", "mfi_14"].includes(dbField)) {
+  if (["rsi_14", "stoch_k", "stoch_rsi_k", "mfi_14"].includes(baseField)) {
     return clamp(v, 0, 100);
   }
   // Binary-ish indicators
   if (
     ["parabolic_sar_signal", "ichimoku_score", "supertrend_signal"].includes(
-      dbField
+      baseField
     )
   ) {
     if (v > 0) return 75;
@@ -181,17 +234,21 @@ export function normalizeIndicatorScore(
     "variance_20",
     "mass_index",
   ]);
-  if (lowerBetterFields.has(dbField)) {
-    const scale = TECHNICAL_SCALES[dbField] ?? 1.0;
+  const isLowerBetter = variant === "rolling_volatility" || lowerBetterFields.has(baseField) || FUNDAMENTAL_LOWER_BETTER.has(baseField) || lowerIsBetter;
+  if (lowerBetterFields.has(baseField) || variant === "rolling_volatility") {
+    const scale = TECHNICAL_SCALES[baseField] ?? 1.0;
     return clamp(50 - 25 * tanh(Math.abs(v) / scale), 0, 100);
   }
   // Scaled indicators (macd_histogram, roc_12, cci_20, etc.)
-  if (TECHNICAL_SCALES[dbField] !== undefined) {
-    const scale = TECHNICAL_SCALES[dbField];
+  if (TECHNICAL_SCALES[baseField] !== undefined) {
+    const scale = TECHNICAL_SCALES[baseField];
     return clamp(50 + 25 * tanh(v / scale), 0, 100);
   }
-  // Default: clamp
-  return clamp(v, 0, 100);
+  if (variant === "normalized") return clamp(v, 0, 100);
+  if (FUNDAMENTAL_FIELDS.has(baseField)) return robustUnbounded(v, isLowerBetter);
+  // Unknown/unbounded indicators retain a monotonic, finite transform for
+  // cross-sectional ranking instead of saturating at 0/100.
+  return robustUnbounded(v, isLowerBetter);
 }
 
 // ─── Coverage-weighted mean (spec §5 Steps 5/6) ───────────────────────────────
@@ -204,7 +261,7 @@ export function coverageWeightedMean(
   for (let i = 0; i < scores.length; i++) {
     const s = scores[i];
     const w = weights[i] ?? 0;
-    if (s === null || Number.isNaN(s as number)) continue;
+    if (!finite(s) || !finite(w) || w <= 0) continue;
     num += s * w;
     den += w;
   }

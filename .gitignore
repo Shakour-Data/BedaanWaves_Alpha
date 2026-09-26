@@ -308,6 +308,17 @@ tmp_baseline_store/
 /test_upsert.ts
 /tests/check-sources.py
 /verify-data.cjs
+/check_aapl.ts
+/check_dates.ts
+/check_scores.ts
+/debug_ttm.py
+/reseed.ts
+/scripts/fix_macro_data.py
+/scripts/fix_macro_data.ts
+/scripts/fix_release_dates.ts
+/test3.txt
+/test_write.txt
+/test_write2.txt
 
 # Public assets (generated or static, track if needed)
 !public/apple-touch-icon.png

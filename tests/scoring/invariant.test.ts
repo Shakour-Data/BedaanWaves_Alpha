@@ -20,6 +20,8 @@ import {
 } from "@/lib/scoring/metric-universe";
 import { SEED_TICKERS_DEDUP } from "@/lib/scoring/seed/universe";
 import { normalizeIndicatorScore, coverageWeightedMean, gradeFor, isValidCoefficients, uniformWeights } from "@/lib/scoring/transforms";
+import { scoreMarket, type ScoreMarketInput } from "@/lib/scoring/engine";
+import { RealTickerWalk } from "@/lib/scoring/seed/real-data";
 
 // ─── Invariant 1: NASDAQ-only tickers ──────────────────────────────────────────
 // All seed tickers must be NASDAQ-listed (not OTC, NYSE, or test issues).
@@ -217,6 +219,71 @@ test("normalizeIndicatorScore returns 50.0 for null/NaN (neutral)", () => {
   assert.strictEqual(result1, 50.0);
   assert.strictEqual(result3, 50.0);
 });
+
+test("fundamental normalization remains monotonic without hard saturation", () => {
+  const low = normalizeIndicatorScore("pe_ratio", 20, true);
+  const high = normalizeIndicatorScore("pe_ratio", 200, true);
+  const higher = normalizeIndicatorScore("pe_ratio", 800, true);
+  assert.ok(low > high && high > higher, "Lower-is-better valuation scores must remain ordered");
+  assert.ok(normalizeIndicatorScore("pe_ratio__rolling_volatility", 2, true) > normalizeIndicatorScore("pe_ratio__rolling_volatility", 8, true));
+});
+
+test("scoreMarket uses present normalized variants without treating missing variants as neutral", () => {
+  const assetMetrics: Record<string, Record<string, number | null>> = {
+    A: {
+      pe_ratio: null,
+      pe_ratio__normalized: 80,
+    },
+    B: {
+      pe_ratio: null,
+      pe_ratio__normalized: 40,
+    },
+  };
+  const coefficients: Record<string, null> = { A: null, B: null };
+  const results = scoreMarket({
+    assetMetrics,
+    coefficients,
+    capturedAt: "2026-09-22T22:00:00Z",
+    recentOveralls: {},
+  });
+  const byTicker = Object.fromEntries(results.map((result) => [result.ticker, result]));
+  assert.strictEqual(byTicker.A.subAspectScores.pe_ratio, 80);
+  assert.strictEqual(byTicker.B.subAspectScores.pe_ratio, 40);
+});
+
+test("RealTickerWalk selects point-in-time snapshots without legacy fallback", () => {
+  const walk = new RealTickerWalk("A", {
+    ohlcv: [
+      { date: "2026-01-02", open: 10, high: 11, low: 9, close: 10, volume: 100 },
+      { date: "2026-01-05", open: 10, high: 11, low: 9, close: 10, volume: 100 },
+      { date: "2026-01-09", open: 10, high: 11, low: 9, close: 10, volume: 100 },
+    ],
+    info: { trailingPE: 999, priceToBook: 999 },
+    info_effective_at: "2026-01-10",
+    fundamental_history: [
+      {
+        reported_at: "2026-01-03",
+        fiscal_period_end: "2025-12-31",
+        effective_at: "2026-01-03",
+        source: "test",
+        metrics: { pe_ratio: 20 },
+      },
+      {
+        reported_at: "2026-01-08",
+        fiscal_period_end: "2026-03-31",
+        effective_at: "2026-01-08",
+        source: "test",
+        metrics: { pe_ratio: 30, pb_ratio: 2 },
+      },
+    ],
+  });
+  assert.strictEqual(walk.metricsForDay(0, [], null, "2026-01-02").pe_ratio, null);
+  assert.strictEqual(walk.metricsForDay(1, [], null, "2026-01-05").pe_ratio, 20);
+  assert.strictEqual(walk.metricsForDay(2, [], null, "2026-01-09").pe_ratio, 30);
+  assert.strictEqual(walk.metricsForDay(2, [], null, "2026-01-09").pb_ratio, 2);
+  assert.strictEqual(walk.metricsForDay(2, [], null, "2026-01-09").price_to_cash_flow, null);
+});
+
 
 test("coverageWeightedMean returns values in [0, 100] with neutral fallback", () => {
   const result = coverageWeightedMean([null, null], [0.5, 0.5]);

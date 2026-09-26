@@ -9,6 +9,8 @@ import {
   SUB_DIMENSIONS,
   SUB_ASPECT_PARENT,
   SUB_ASPECTS_BY_SUB_DIM,
+  INDICATOR_VARIANT_REGISTRY,
+  FEATURE_NAMES_BY_SUB_ASPECT,
   type DimensionKey,
 } from "./metric-universe";
 import {
@@ -108,100 +110,130 @@ export function scoreMarket(input: ScoreMarketInput): HierarchicalScore[] {
   const { assetMetrics, coefficients, capturedAt, recentOveralls, prices } =
     input;
   const tickers = Object.keys(assetMetrics);
-  const n = tickers.length;
 
-   // Step 1 — compute sub-aspect scores per db_field
-   // For macro dimension metrics (market-wide, same value for all tickers),
-   // use time-series scoring then modulate by per-ticker macro sensitivity (beta)
-   // so that different tickers get differentiated macro dimension scores.
-   // For sentiment-dimension sub-aspects, the raw values are ALREADY on a
-   // 0-100 scale (news_sentiment_avg: 25-75 from severity-weighted sentiment,
-   // news_volume: 0-100 from sqrt-scaled article count, social_sentiment:
-   // 0-100 derived from buzz × deviation). Cross-sectional ranking would
-   // destroy the absolute sentiment meaning (e.g., all bullish news → all
-   // tickers score 50 because they're tied). Instead, use the normalized
-   // value directly as the L4 score, with null → 50.0 neutral.
-const SENTIMENT_DIM = "sentiment";
-    const AI_DIM = "ai";
-    const subAspectScoreMap: Record<string, Record<string, number>> = {};
-    const presentMetrics = new Map<string, Set<string>>();
-    for (const ticker of tickers) {
-      subAspectScoreMap[ticker] = {};
-      presentMetrics.set(ticker, new Set());
-    }
-    for (const spec of METRIC_UNIVERSE) {
-      if (spec.dim === "macro") {
-        // Time-series scoring: score the current macro value relative to its
-        // historical distribution. All tickers share the same base score.
-        const hist = input.macroHistory?.[spec.dbField] ?? [];
-        const val = tickers.length > 0 ? assetMetrics[tickers[0]]?.[spec.dbField] ?? null : null;
-        const macroPresent = val !== null && Number.isFinite(val);
-        const baseScore = timeSeriesScore(val, hist, spec.lowerIsBetter);
-        // Modulate by per-ticker sensitivity: positive beta amplifies the
-        // deviation from 50 in the favorable direction; negative beta reverses it.
-        for (let i = 0; i < n; i++) {
-          const beta = clamp(input.macroSensitivities?.[tickers[i]]?.[spec.dbField] ?? 0, -1, 1);
-          const adjusted = 50 + (baseScore - 50) * (1 + beta * 0.6);
-          subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(adjusted, 0, 100);
-          if (macroPresent) presentMetrics.get(tickers[i])!.add(spec.subAspect);
-        }
-      } else if (spec.dim === SENTIMENT_DIM) {
-        // Sentiment sub-aspects are already on a 0-100 scale from
-        // computeNewsSentimentForDay. Use the value directly — do NOT
-        // cross-sectionally rank, which would obliterate absolute sentiment.
-        for (let i = 0; i < n; i++) {
-          const raw = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
-          if (raw === null || !Number.isFinite(raw)) {
-            subAspectScoreMap[tickers[i]][spec.subAspect] = 50.0;
-          } else {
-            subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(raw, 0, 100);
-            presentMetrics.get(tickers[i])!.add(spec.subAspect);
-          }
-        }
-      } else if (spec.dim === AI_DIM) {
-        // AI sub-aspects are already on a 0-100 scale from real-data.ts
-        // (real market derivations) and/or the Python ML inference module
-        // (ensemble predictions). Use the value directly — do NOT
-        // cross-sectionally rank, which would compress narrow-range
-        // AI signals toward 50.
-        for (let i = 0; i < n; i++) {
-          const raw = assetMetrics[tickers[i]]?.[spec.dbField] ?? null;
-          if (raw === null || !Number.isFinite(raw)) {
-            subAspectScoreMap[tickers[i]][spec.subAspect] = 50.0;
-          } else {
-            subAspectScoreMap[tickers[i]][spec.subAspect] = clamp(raw, 0, 100);
-            presentMetrics.get(tickers[i])!.add(spec.subAspect);
-          }
-        }
+  // Step 1 — score every registered indicator variant, then combine the
+  // available variants into the canonical L4 sub-aspect score. This keeps the
+  // hierarchy stable while letting raw, peer-normalized, rolling, volatility,
+  // and lag features contribute to the score.
+  const SENTIMENT_DIM = "sentiment";
+  const AI_DIM = "ai";
+  const variantScoreMap: Record<string, Record<string, number | null>> = {};
+  const presentMetrics = new Map<string, Set<string>>();
+  for (const ticker of tickers) {
+    variantScoreMap[ticker] = {};
+    presentMetrics.set(ticker, new Set());
+  }
+
+  const rawColumns = new Map<string, (number | null)[]>();
+  for (const spec of METRIC_UNIVERSE) {
+    rawColumns.set(
+      spec.subAspect,
+      tickers.map((ticker) => {
+        const raw = assetMetrics[ticker]?.[spec.dbField] ?? null;
+        return raw !== null && Number.isFinite(raw) ? raw : null;
+      })
+    );
+  }
+
+  for (const variantSpec of INDICATOR_VARIANT_REGISTRY) {
+    const base = variantSpec.subAspect;
+    const parent = SUB_ASPECT_PARENT[base];
+    const variant = variantSpec.variant;
+    const lower = variant === "rolling_volatility" || variantSpec.lowerIsBetter;
+    const directNormalized = variant === "normalized"
+      ? tickers.map((ticker) => {
+          const value = assetMetrics[ticker]?.[variantSpec.featureName] ?? null;
+          return value !== null && Number.isFinite(value) ? value : null;
+        })
+      : null;
+    const column: (number | null)[] = tickers.map((ticker, i) => {
+      const metrics = assetMetrics[ticker] ?? {};
+      let value: number | null = null;
+      if (variant === "raw") {
+        value = metrics[base] ?? null;
       } else {
-        // Cross-sectional scoring for per-ticker metrics (fundamental, technical, etc.)
-        // Per spec §6.1: normalize raw indicator values before scoring.
-        const col: (number | null)[] = tickers.map(
-          (t) => {
-            const raw = assetMetrics[t]?.[spec.dbField] ?? null;
-            if (raw === null || !Number.isFinite(raw)) return null;
-            return normalizeIndicatorScore(spec.dbField, raw);
-          }
-        );
-        const scores = crossSectionalScore(col, spec.lowerIsBetter);
-        for (let i = 0; i < n; i++) {
-          subAspectScoreMap[tickers[i]][spec.subAspect] = scores[i];
-          if (col[i] !== null) presentMetrics.get(tickers[i])!.add(spec.subAspect);
-        }
+        value = metrics[variantSpec.featureName] ?? null;
       }
-   }
+      if (value !== null && !Number.isFinite(value)) value = null;
+      if (value === null && variant === "normalized") {
+        value = (rawColumns.get(base) ?? [])[i] ?? null;
+      }
+      return value;
+    });
+
+    let scores: number[];
+    if (variant === "normalized" && directNormalized !== null && (parent.dim === SENTIMENT_DIM || parent.dim === AI_DIM)) {
+      scores = column.map((value) => value === null ? 50 : clamp(value, 0, 100));
+    } else if (variant === "normalized" && directNormalized !== null) {
+      const fallbackColumn = column.map((value, i) => directNormalized[i] === null ? value : null);
+      const fallbackScores = crossSectionalScore(
+        fallbackColumn.map((value) => value === null ? null : normalizeIndicatorScore(variantSpec.featureName, value, lower)),
+        lower
+      );
+      scores = column.map((_, i) => directNormalized[i] !== null
+        ? clamp(directNormalized[i] as number, 0, 100)
+        : fallbackScores[i]);
+    } else if (parent.dim === "macro") {
+      const hist = input.macroHistory?.[base] ?? [];
+      scores = column.map((value, i) => {
+        const baseScore = timeSeriesScore(value, hist, lower);
+        const beta = clamp(input.macroSensitivities?.[tickers[i]]?.[base] ?? 0, -1, 1);
+        // Primary: beta-scaled deviation from neutral
+        const betaComponent = (baseScore - 50) * (1 + beta * 0.6);
+        // Secondary: even when baseScore is neutral (sparse history), use the
+        // macro indicator's absolute level relative to its history midpoint
+        // combined with the ticker's beta to produce differentiation.
+        // This ensures macro scores are NOT flat 50 for all tickers.
+        let levelComponent = 0;
+        if (Math.abs(baseScore - 50) < 0.5 && hist.length >= 2) {
+          const midPoint = (Math.min(...hist) + Math.max(...hist)) / 2;
+          const range = Math.max(...hist) - Math.min(...hist);
+          if (range > 1e-12 && value !== null) {
+            // Where does the current value sit relative to midpoint? [-1, 1]
+            const levelPos = clamp((value - midPoint) / (range / 2), -1, 1);
+            // Beta tells us how the ticker responds to this indicator.
+            // If beta > 0, ticker moves WITH the indicator → amplify level effect.
+            // If beta < 0, ticker moves AGAINST → reverse level effect.
+            // Scale: ±20 points max for extreme level + strong beta.
+            levelComponent = levelPos * beta * 20;
+          }
+        }
+        return clamp(50 + betaComponent + levelComponent, 0, 100);
+      });
+    } else if (parent.dim === SENTIMENT_DIM || parent.dim === AI_DIM) {
+      scores = column.map((value) => value === null ? 50 : clamp(value, 0, 100));
+    } else {
+      const normalizedColumn = column.map((value) =>
+        value === null ? null : normalizeIndicatorScore(`${base}__${variant}`, value, lower)
+      );
+      scores = crossSectionalScore(normalizedColumn, lower);
+    }
+
+    for (let i = 0; i < tickers.length; i++) {
+      if (column[i] !== null) {
+        variantScoreMap[tickers[i]][variantSpec.featureName] = scores[i];
+        presentMetrics.get(tickers[i])!.add(base);
+      } else {
+        variantScoreMap[tickers[i]][variantSpec.featureName] = null;
+      }
+    }
+  }
 
   const out: HierarchicalScore[] = [];
   for (const ticker of tickers) {
     const coeffs = coefficients[ticker] ?? null;
     // Step 3 — L4 sub-aspect scores (already transformed; missing → 50.0)
     const l4: Record<string, number> = {};
-    let present = 0;
     for (const spec of METRIC_UNIVERSE) {
-      const s = subAspectScoreMap[ticker][spec.subAspect];
-      l4[spec.subAspect] = s;
-      if (s !== 50.0) present++;
+      const featureNames = FEATURE_NAMES_BY_SUB_ASPECT[spec.subAspect] ?? [];
+      const variantScores = featureNames
+        .map((featureName) => variantScoreMap[ticker]?.[featureName])
+        .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+      l4[spec.subAspect] = variantScores.length > 0
+        ? variantScores.reduce((sum, value) => sum + value, 0) / variantScores.length
+        : 50;
     }
+    const present = presentMetrics.get(ticker)?.size ?? 0;
     const coverage = present / METRIC_UNIVERSE.length;
 
     // Step 4 — L3 aspects: weighted mean of child sub-aspects using per-symbol

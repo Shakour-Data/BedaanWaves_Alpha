@@ -31,12 +31,32 @@ async function main() {
   const coeffs: Record<string, any> = {};
   for (const t of universe.tickers) coeffs[t] = null;
 
+  // Build mock macro sensitivities for testing (simulating what orchestrator produces)
+  // In production, these come from computeSensitivity (Pearson corr of returns vs macro changes)
+  const macroSensitivities: Record<string, Record<string, number>> = {};
+  const macroFields = Object.keys(day.macro);
+  for (const t of universe.tickers.slice(0, 3)) {
+    const betas: Record<string, number> = {};
+    for (const f of macroFields) {
+      // Simulate realistic betas: tech stocks sensitive to rates/nasdaq, defensives less so
+      if (f.includes("treasury") || f === "vix" || f === "dollar_index") {
+        betas[f] = t === universe.tickers[0] ? 0.6 : t === universe.tickers[1] ? -0.3 : 0.1;
+      } else if (f.includes("inflation") || f === "oil_price") {
+        betas[f] = t === universe.tickers[0] ? 0.2 : t === universe.tickers[1] ? 0.5 : -0.1;
+      } else {
+        betas[f] = (Math.sin(t.charCodeAt(0) + f.charCodeAt(0)) * 0.5);
+      }
+    }
+    macroSensitivities[t] = betas;
+  }
+
   const snapshots = scoreMarket({
     assetMetrics: day.assetMetrics,
     coefficients: coeffs,
     capturedAt: new Date().toISOString(),
     prices: day.prices,
     macroHistory: day.macroHistory,
+    macroSensitivities,
   });
 
   // Check macro sub-aspect scores
@@ -63,6 +83,12 @@ async function main() {
   console.log(`\nNeutral macro sub-aspect scores for ${first.ticker}:`);
   for (const a of neutral) {
     console.log(`  ${a.key.padEnd(30)} = ${a.score.toFixed(1)}`);
+  }
+
+  // Show differentiation across tickers
+  console.log(`\nMacro dimension scores across first 5 tickers:`);
+  for (const s of snapshots.slice(0, 5)) {
+    console.log(`  ${s.ticker}: macro=${s.dimensionScores.macro?.toFixed(1)} overall=${s.overall.toFixed(1)}`);
   }
 
   console.log(`\nMacro dimension score: ${first.dimensionScores.macro?.toFixed(1)} (was 50.0 before fix)`);
