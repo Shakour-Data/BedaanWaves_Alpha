@@ -1,7 +1,9 @@
 import sqlite3
 from datetime import datetime, timezone
 
-db_path = "C:/Users/Administrator/Documents/BedaanWaves_Alpha/db/custom.db"
+db_path = os.environ.get("DATABASE_URL", "").replace("file:", "").replace("custom.db", "custom.db")
+if not db_path or "DATABASE_URL" not in os.environ:
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prisma", "db", "custom.db")
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 

@@ -76,9 +76,10 @@ page_prod2.html
 test_shot.png
 
 # Local SQLite databases and backups (do not track)
-/db/*.db
-/db/*.bak
-/db/backups/*.db
+/db/
+/prisma/db/*.db
+/prisma/db/*.bak
+/prisma/db/backups/*.db
 
 # Prisma database (local SQLite, do not track)
 /prisma/db/

@@ -1,18 +1,22 @@
 import json, sqlite3, os
 
-# Get top 500 tickers from DB
-conn = sqlite3.connect('C:/Users/Administrator/Documents/BedaanWaves_Alpha/db/custom.db')
+db_path = os.environ.get("DATABASE_URL", "").replace("file:", "").replace("custom.db", "custom.db")
+if not db_path or "DATABASE_URL" not in os.environ:
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prisma", "db", "custom.db")
+
+conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 cursor.execute('SELECT ticker, name, sector, industry, marketCap, isEtf FROM symbol ORDER BY marketCap DESC LIMIT 500')
 rows = cursor.fetchall()
 conn.close()
 
-# Load OHLCV data
-market = 'C:/Users/Administrator/Documents/BedaanWaves_Alpha/src/lib/scoring/seed/real-market-data.json'
-with open(market) as f:
+market_path = os.environ.get("REAL_MARKET_DATA_PATH", "")
+if not market_path:
+    market_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "lib", "scoring", "seed", "real-market-data.json")
+
+with open(market_path) as f:
     data = json.load(f)
 
-# Generate universe.ts with 500 symbols
 lines = []
 lines.append('// BedaanWaves — Top 500 NASDAQ symbols for scoring.')
 lines.append('// Auto-generated for V2 scoring engine.')
@@ -49,7 +53,11 @@ lines.append('];')
 lines.append('')
 lines.append('export const SEED_TICKERS_DEDUP: SeedTicker[] = SEED_TICKERS;')
 
-with open('C:/Users/Administrator/Documents/BedaanWaves_Alpha/src/lib/scoring/seed/universe_score500.ts', 'w') as f:
+output_path = os.environ.get("UNIVERSE_OUTPUT_PATH", "")
+if not output_path:
+    output_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "lib", "scoring", "seed", "universe_score500.ts")
+
+with open(output_path, 'w') as f:
     f.write('\n'.join(lines))
 
 print(f'Generated universe_score500.ts with {len(rows)} symbols, {len(tickers_with_data)} with OHLCV')
