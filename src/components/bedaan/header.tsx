@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Activity, TrendingUp, Layers } from "lucide-react";
+import { Search, Activity, TrendingUp, Layers, HelpCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
@@ -134,6 +134,13 @@ export function Header({ onSymbolSelect }: Props) {
         title="Batch candlestick charts"
       >
         <Layers className="h-3 w-3" /> Batches
+      </Link>
+<Link
+        href="/help"
+        className="hidden items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/60 sm:flex"
+        title="Help Center"
+      >
+        <HelpCircle className="h-3 w-3" /> Help
       </Link>
     </header>
   );

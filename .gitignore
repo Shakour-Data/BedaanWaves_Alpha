@@ -333,3 +333,7 @@ tsconfig.scripts.json
 
 .vercel
 .env
+
+# Documentation portal (generated, do not track)
+/docs-portal/
+DocPromp
