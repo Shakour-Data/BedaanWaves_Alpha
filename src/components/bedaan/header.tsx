@@ -128,19 +128,12 @@ export function Header({ onSymbolSelect }: Props) {
       >
         <TrendingUp className="h-3 w-3" /> Export
       </a>
-      <Link
+<Link
         href="/batches"
         className="hidden items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/60 sm:flex"
         title="Batch candlestick charts"
       >
         <Layers className="h-3 w-3" /> Batches
-      </Link>
-<Link
-        href="/help"
-        className="hidden items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/60 sm:flex"
-        title="Help Center"
-      >
-        <HelpCircle className="h-3 w-3" /> Help
       </Link>
     </header>
   );

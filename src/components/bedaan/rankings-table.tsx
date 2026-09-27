@@ -384,23 +384,24 @@ export function RankingsTable({ selectedTicker, onSelect }: Props) {
 
   const symbolHits = symbolQ.data?.symbols ?? [];
 
-  const [visibleColumnKeys, setVisibleColumnKeys] = useState<RankingColumnKey[]>(() => {
-    if (typeof window === "undefined") return ALL_COLUMN_KEYS;
-    try {
-      const saved = window.localStorage.getItem("rankings-visible-columns");
-      const parsed: unknown = saved ? JSON.parse(saved) : null;
-      if (
-        Array.isArray(parsed) &&
-        parsed.length > 0 &&
-        parsed.every((key) => ALL_COLUMN_KEYS.includes(key as RankingColumnKey))
-      ) {
-        return parsed as RankingColumnKey[];
-      }
-    } catch {
-      return ALL_COLUMN_KEYS;
+const [visibleColumnKeys, setVisibleColumnKeys] = useState<RankingColumnKey[]>(ALL_COLUMN_KEYS);
+
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  try {
+    const saved = window.localStorage.getItem("rankings-visible-columns");
+    const parsed: unknown = saved ? JSON.parse(saved) : null;
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((key) => ALL_COLUMN_KEYS.includes(key as RankingColumnKey))
+    ) {
+      setVisibleColumnKeys(parsed as RankingColumnKey[]);
     }
-    return ALL_COLUMN_KEYS;
-  });
+  } catch {
+    // Keep current state if parsing fails
+  }
+}, []);
 
   const activeColumnFilters = useMemo(
     () =>

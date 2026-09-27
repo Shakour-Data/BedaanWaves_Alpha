@@ -11,9 +11,9 @@ import { WatchlistAlertsPanel } from "@/components/bedaan/watchlist-alerts-panel
 import {
   NativeCandlestickChart,
   NativeHeatmap,
-  NativeEconomicCalendar,
   NativeMarketOverview,
 } from "@/components/bedaan/native-market-widgets";
+import { EnhancedEconomicCalendar } from "@/components/bedaan/enhanced-economic-calendar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, CandlestickChart, Grid3x3 } from "lucide-react";
@@ -224,7 +224,7 @@ export default function Home() {
               </span>
             </div>
             <div className="h-[450px] w-full overflow-hidden rounded border border-border bg-card">
-              <NativeEconomicCalendar height={450} />
+              <EnhancedEconomicCalendar height={450} selectedSymbol={selected} />
             </div>
           </div>
         </div>
